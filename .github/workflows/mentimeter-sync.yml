@@ -1,0 +1,93 @@
+name: Mentimeter sync
+
+on:
+  schedule:
+    # Quinta-feira, 07:00 em America/Belem (UTC-3).
+    - cron: "0 10 * * 4"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Tipo de sincronizacao
+        required: true
+        default: incremental
+        type: choice
+        options:
+          - incremental
+          - backfill
+          - manual
+      presentation_id:
+        description: ID opcional de uma apresentacao
+        required: false
+        type: string
+      force_reclassify:
+        description: Reclassificar questoes mesmo sem mudanca de hash
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: Validar sem persistir no Supabase
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mentimeter-results-sync
+  cancel-in-progress: false
+
+jobs:
+  validate-and-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MENTIMETER_EMAIL: ${{ secrets.MENTIMETER_EMAIL }}
+      MENTIMETER_PASSWORD: ${{ secrets.MENTIMETER_PASSWORD }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: gpt-5.6-luna
+      OPENAI_MONTHLY_BUDGET_USD: "5"
+      OPENAI_BUDGET_WARNING_PERCENT: "70"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install pipeline dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run pipeline tests
+        run: python -m pytest tests/pipeline -q
+
+      - name: Synchronize Mentimeter results
+        shell: bash
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_PRESENTATION_ID: ${{ inputs.presentation_id }}
+          INPUT_FORCE_RECLASSIFY: ${{ inputs.force_reclassify }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          mode="${INPUT_MODE:-incremental}"
+          args=(sync --mode "$mode")
+          if [[ -n "${INPUT_PRESENTATION_ID:-}" ]]; then
+            args+=(--presentation-id "$INPUT_PRESENTATION_ID")
+          fi
+          if [[ "${INPUT_FORCE_RECLASSIFY:-false}" == "true" ]]; then
+            args+=(--force-reclassify)
+          fi
+          if [[ "${INPUT_DRY_RUN:-false}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python -m pipeline "${args[@]}"

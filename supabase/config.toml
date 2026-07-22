@@ -1,0 +1,4 @@
+project_id = "desafio-trauma"
+
+[functions.dispatch-ingestion]
+verify_jwt = true

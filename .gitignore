@@ -2,3 +2,17 @@ node_modules
 dist
 .DS_Store
 .worktrees/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage/
+test-results/
+playwright-report/
+pipeline-artifacts/
+.npm-cache/
+.superpowers/
