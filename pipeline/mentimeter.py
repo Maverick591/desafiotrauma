@@ -205,9 +205,8 @@ class MentimeterClient:
         download_button.wait_for(state="visible", timeout=45_000)
         # Fresh browser contexts can retain a consent overlay after login.
         download_button.click(force=True)
-        xlsx_menuitem = page.get_by_role(
-            "menuitem", name=re.compile(r"Download\s+Spreadsheet\s+\(XLSX\)", re.I)
-        )
+        xlsx_menuitem = page.locator("#excel-download-button")
+        xlsx_menuitem.wait_for(state="visible", timeout=15_000)
         with page.expect_event("download", timeout=45_000) as download_info:
             xlsx_menuitem.click()
         xlsx_path = destination / f"{ref.presentation_id}.xlsx"

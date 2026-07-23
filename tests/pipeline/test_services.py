@@ -220,7 +220,12 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
 
         def get_by_role(self, role: str, **options):
             self.roles.append((role, options))
-            return self.download_button if role == "button" else self.xlsx_menuitem
+            assert role == "button"
+            return self.download_button
+
+        def locator(self, selector: str):
+            assert selector == "#excel-download-button"
+            return self.xlsx_menuitem
 
         def expect_event(self, event: str, **_kwargs):
             assert event == "download"
@@ -237,10 +242,9 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
-    assert page.roles[1][0] == "menuitem"
-    assert page.roles[1][1]["name"].search("Download Spreadsheet (XLSX)")
     assert page.download_button.waited is True
     assert page.download_button.click_options == {"force": True}
+    assert page.xlsx_menuitem.waited is True
     assert page.xlsx_menuitem.click_options == {}
     assert path.read_bytes() == b"xlsx"
 
