@@ -56,6 +56,7 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
             self.value = None
             self.clicked = False
             self.click_options = {}
+            self.removed = False
 
         def fill(self, value: str) -> None:
             self.value = value
@@ -64,11 +65,18 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
             self.clicked = True
             self.click_options = options
 
+        def count(self) -> int:
+            return 1
+
+        def evaluate(self, _script: str) -> None:
+            self.removed = True
+
     class FakePage:
         def __init__(self) -> None:
             self.email = FakeLocator()
             self.password = FakeLocator()
             self.submit = FakeLocator()
+            self.consent = FakeLocator()
             self.test_ids: list[str] = []
 
         def goto(self, *_args, **_kwargs) -> None:
@@ -82,6 +90,10 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
         def get_by_test_id(self, test_id: str):
             self.test_ids.append(test_id)
             return {"password-input": self.password, "login-btn": self.submit}[test_id]
+
+        def locator(self, selector: str):
+            assert selector == "#cookiebanner-container"
+            return self.consent
 
         def get_by_role(self, _role, name):
             if name.search("Sign in with Google"):
@@ -97,8 +109,9 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     assert page.test_ids == ["password-input", "login-btn"]
     assert page.email.value == "admin@example.invalid"
     assert page.password.value == "secret"
+    assert page.consent.removed is True
     assert page.submit.clicked is True
-    assert page.submit.click_options == {"force": True}
+    assert page.submit.click_options == {}
 
 
 def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> None:
@@ -243,7 +256,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
     assert page.download_button.waited is True
-    assert page.download_button.click_options == {"force": True}
+    assert page.download_button.click_options == {}
     assert page.xlsx_menuitem.waited is True
     assert page.xlsx_menuitem.click_options == {}
     assert path.read_bytes() == b"xlsx"

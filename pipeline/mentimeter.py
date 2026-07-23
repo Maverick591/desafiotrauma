@@ -107,10 +107,14 @@ class MentimeterClient:
 
     def _login(self, page) -> None:
         page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
+        consent = page.locator("#cookiebanner-container")
+        if consent.count():
+            # Keep the default consent state; only remove the visual overlay that
+            # otherwise intercepts automation clicks in fresh CI contexts.
+            consent.evaluate("(element) => element.remove()")
         page.get_by_label(re.compile("email", re.I)).fill(self.email)
         page.get_by_test_id("password-input").fill(self.password)
-        # Consent banners can overlay the form in fresh CI browser contexts.
-        page.get_by_test_id("login-btn").click(force=True)
+        page.get_by_test_id("login-btn").click()
         page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
 
     def _discover_with_page(self, page) -> list[PresentationRef]:
@@ -203,8 +207,7 @@ class MentimeterClient:
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
         download_button = page.get_by_role("button", name="Download", exact=True)
         download_button.wait_for(state="visible", timeout=45_000)
-        # Fresh browser contexts can retain a consent overlay after login.
-        download_button.click(force=True)
+        download_button.click()
         xlsx_menuitem = page.locator("#excel-download-button")
         xlsx_menuitem.wait_for(state="visible", timeout=15_000)
         with page.expect_event("download", timeout=45_000) as download_info:
