@@ -590,6 +590,26 @@ def test_ai_cannot_override_structural_academic_question_role(tmp_path: Path) ->
     assert classified.analysis_role == "academic"
 
 
+def test_answer_key_takes_precedence_over_evaluation_word_in_question_title() -> None:
+    deck = {
+        "slides": [{
+            "static_content": {"type": "quiz-choice"},
+            "interactive_contents": [{
+                "title": "Qual critério entra na avaliação do prognóstico?",
+                "choices": [
+                    {"title": "Critério correto", "marked_correct": True},
+                    {"title": "Distrator", "marked_correct": False},
+                ],
+            }],
+        }],
+    }
+
+    question = questions_from_deck(deck, "presentation")[0]
+
+    assert question.kind == QuestionKind.ACADEMIC
+    assert question.correct_indices == (0,)
+
+
 def _sample_data():
     presentation = Presentation("p1", "Desafio Trauma - 27/05/2026", date(2026, 5, 27), "/p1")
     session = Session("s1", "p1", date(2026, 5, 27), 5, 1, complete=True)

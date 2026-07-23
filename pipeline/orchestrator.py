@@ -41,8 +41,8 @@ def questions_from_deck(deck: dict[str, Any], presentation_id: str) -> list[Ques
             lower = f"{slide_type} {title}".casefold()
             if "participante" in lower or "profile" in lower: kind = QuestionKind.PROFILE
             elif "nps" in lower or "recomend" in lower: kind = QuestionKind.NPS
-            elif any(token in lower for token in ("avali", "scale", "rating")): kind = QuestionKind.EVALUATION
             elif correct or "quiz" in lower: kind = QuestionKind.ACADEMIC
+            elif any(token in lower for token in ("avali", "scale", "rating")): kind = QuestionKind.EVALUATION
             else: kind = QuestionKind.OTHER
             questions.append(Question(stable_id("question", presentation_id, slide_index, title), presentation_id, slide_index, title, kind, choices, correct))
     return questions
