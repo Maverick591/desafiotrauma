@@ -152,6 +152,69 @@ def test_snapshot_contract_accepts_legitimate_one_percent() -> None:
     validate_public_snapshot(snapshot)
 
 
+def test_academic_trend_skips_non_academic_sessions_without_creating_gaps() -> None:
+    presentations = [
+        Presentation("p1", "Desafio Trauma - 01/01/2026", date(2026, 1, 1), "/p1"),
+        Presentation("p2", "Desafio Trauma - 08/01/2026", date(2026, 1, 8), "/p2"),
+        Presentation("p3", "Desafio Trauma - 15/01/2026", date(2026, 1, 15), "/p3"),
+    ]
+    sessions = [
+        Session("s1", "p1", date(2026, 1, 1), 5, 1, True),
+        Session("s2", "p2", date(2026, 1, 8), 5, 1, True),
+        Session("s3", "p3", date(2026, 1, 15), 5, 1, True),
+    ]
+    questions = [
+        Question("q1", "p1", 1, "Acadêmica 1", QuestionKind.ACADEMIC),
+        Question("q2", "p2", 1, "Perfil", QuestionKind.PROFILE),
+        Question("q3", "p3", 1, "Acadêmica 2", QuestionKind.ACADEMIC),
+    ]
+    responses = []
+    for index in range(5):
+        responses.extend([
+            Response(f"a1-{index}", "s1", "q1", f"s1-u{index}", "A", True),
+            Response(f"p-{index}", "s2", "q2", f"s2-u{index}", "Residente", None),
+            Response(f"a3-{index}", "s3", "q3", f"s3-u{index}", "B", False),
+        ])
+    snapshot = build_public_snapshot(presentations, sessions, questions, responses)
+    assert [row["label"] for row in snapshot["learning"]["trend"]] == ["01/01/2026", "15/01/2026"]
+    assert [row["moving_accuracy"] for row in snapshot["learning"]["trend"]] == [100.0, 50.0]
+    assert snapshot["participation"]["monthly"] == [{
+        "month": "2026-01",
+        "label": "jan/26",
+        "participants": 15,
+        "responses": 15,
+        "presentations": 3,
+    }]
+
+
+def test_evaluation_criteria_are_consolidated_and_trended_by_month() -> None:
+    presentations = [
+        Presentation("p1", "Desafio Trauma - 01/01/2026", date(2026, 1, 1), "/p1"),
+        Presentation("p2", "Desafio Trauma - 01/02/2026", date(2026, 2, 1), "/p2"),
+    ]
+    sessions = [
+        Session("s1", "p1", date(2026, 1, 1), 5, 1, True),
+        Session("s2", "p2", date(2026, 2, 1), 5, 1, True),
+    ]
+    questions = [
+        Question("q1", "p1", 1, "Aplicabilidade Clínica", QuestionKind.EVALUATION),
+        Question("q2", "p2", 1, "  aplicabilidade   clínica  ", QuestionKind.EVALUATION),
+    ]
+    responses = [
+        Response(f"jan-{index}", "s1", "q1", f"jan-u{index}", 4, None) for index in range(5)
+    ] + [
+        Response(f"fev-{index}", "s2", "q2", f"fev-u{index}", 5, None) for index in range(5)
+    ]
+    snapshot = build_public_snapshot(presentations, sessions, questions, responses)
+    assert len(snapshot["experience"]["criteria"]) == 1
+    criterion = snapshot["experience"]["criteria"][0]
+    assert criterion["score"] == 4.5
+    assert criterion["responses"] == 10
+    assert [row["score"] for row in criterion["trend"]] == [4.0, 5.0]
+    assert criterion["delta"] == 1.0
+    assert [row["score"] for row in snapshot["experience"]["trend"]] == [4.0, 5.0]
+
+
 def test_parser_requires_real_participant_and_ids_ignore_row_position(tmp_path: Path) -> None:
     missing = tmp_path / "missing-participant.xlsx"
     wb = Workbook(); ws = wb.active

@@ -1,4 +1,4 @@
-import { DonutChart, HorizontalBarChart, TrendChart } from '../components/charts/Charts.jsx'
+import { DonutChart, HorizontalBarChart, MonthlyBarChart, TrendChart } from '../components/charts/Charts.jsx'
 import { DashboardGate } from '../components/ui/DataState.jsx'
 import { MetricCard } from '../components/ui/MetricCard.jsx'
 import { PageHeader } from '../components/ui/PageHeader.jsx'
@@ -19,6 +19,10 @@ export function ParticipationPage() {
             <MetricCard label="Adesão à avaliação" value={numberFrom(data, ['evaluation_rate'])} suffix="%" />
             <MetricCard label="Apresentações" value={numberFrom(data, ['presentations'])} />
           </section>
+          <Panel>
+            <SectionHeading title="Participação por mês" description="Soma das participações registradas em cada mês; uma pessoa pode participar de mais de um encontro." />
+            <MonthlyBarChart data={listFrom(data, 'monthly')} />
+          </Panel>
           <Panel>
             <SectionHeading title="Participação ao longo do tempo" description="Participantes e respostas válidas por período." />
             <TrendChart data={listFrom(data, 'trend', 'timeline')} areas={[{ key: 'participants', label: 'Participantes' }, { key: 'responses', label: 'Respostas', color: '#4c6fff' }]} />

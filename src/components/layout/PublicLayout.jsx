@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Activity, BarChart3, BookOpenCheck, LayoutDashboard, Menu, MessageSquareHeart, Target, X } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { GlobalFilters } from '../filters/GlobalFilters.jsx'
+import { InsightTicker } from '../ui/InsightTicker.jsx'
 import { Footer } from './Footer.jsx'
 import { useDashboard } from '../../state/DashboardContext.jsx'
 
@@ -23,7 +24,7 @@ export function PublicLayout() {
       <header className="topbar">
         <div className="topbar__inner">
           <NavLink className="brand" to="/" aria-label="Desafio Trauma — início">
-            <span className="brand__mark"><Activity aria-hidden="true" /></span>
+            <span className="brand__mark brand__mark--identity"><img src={`${import.meta.env.BASE_URL}desafio-trauma-identity.png`} alt="" /><Activity aria-hidden="true" /></span>
             <span><strong>Desafio Trauma</strong><small>Command Center Clínico</small></span>
           </NavLink>
           <button
@@ -49,6 +50,10 @@ export function PublicLayout() {
 
       <div className="workspace">
         <aside className="sidebar" aria-label="Seções do painel">
+          <NavLink className="sidebar-brand" to="/" aria-label="Desafio Trauma — início">
+            <span className="brand__mark brand__mark--identity"><img src={`${import.meta.env.BASE_URL}desafio-trauma-identity.png`} alt="" /><Activity aria-hidden="true" /></span>
+            <span><strong>Desafio Trauma</strong><small>Command Center Clínico</small></span>
+          </NavLink>
           <div className="sidebar__intro">
             <span>Painel público</span>
             <p>Indicadores agregados de educação médica em trauma.</p>
@@ -68,6 +73,7 @@ export function PublicLayout() {
 
         <div className="content-column">
           <GlobalFilters />
+          <InsightTicker items={snapshot?.overview?.highlights} />
           <main id="conteudo" className="main-content" tabIndex="-1"><Outlet /></main>
           <Footer />
         </div>

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -229,6 +231,32 @@ def _percent(numerator: float, denominator: float) -> float | None:
     return round(100 * numerator / denominator, 1) if denominator else None
 
 
+_MONTH_NAMES = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+def _month_key(value: date) -> str:
+    return value.strftime("%Y-%m")
+
+
+def _month_label(value: str) -> str:
+    year, month = value.split("-")
+    return f"{_MONTH_NAMES[int(month) - 1]}/{year[2:]}"
+
+
+def _normalized_label(value: str) -> str:
+    compact = " ".join(value.split()).casefold()
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKD", compact)
+        if not unicodedata.combining(character)
+    )
+
+
+def _criterion_key(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", _normalized_label(value)).strip("_")
+    return normalized[:42] or "criterio"
+
+
 def published_corpus(presentations, sessions, questions, responses):
     """Exclude open/partial sessions from every public and exported artifact."""
     published_sessions = [session for session in sessions if session.complete]
@@ -264,101 +292,431 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
     presentations, sessions, questions, responses = privacy_safe_corpus(
         presentations, sessions, questions, responses, privacy_k
     )
-    by_session: dict[str, list[Response]] = defaultdict(list); by_question: dict[str, list[Response]] = defaultdict(list)
-    for response in responses: by_session[response.session_id].append(response); by_question[response.question_id].append(response)
+    by_session: dict[str, list[Response]] = defaultdict(list)
+    by_question: dict[str, list[Response]] = defaultdict(list)
+    for response in responses:
+        by_session[response.session_id].append(response)
+        by_question[response.question_id].append(response)
+
+    question_by_id = {question.question_id: question for question in questions}
+    session_by_id = {session.session_id: session for session in sessions}
+    presentation_by_id = {presentation.presentation_id: presentation for presentation in presentations}
+    presentation_dates = {key: value.session_date for key, value in presentation_by_id.items()}
+
     eligible_sessions = []
     for session in sorted(sessions, key=lambda value: value.session_date):
-        distinct = len({r.participant_id for r in by_session[session.session_id]})
-        if distinct < privacy_k: continue
-        academic = [r for r in by_session[session.session_id] if r.is_correct is not None]
-        eligible_sessions.append((session, distinct, valid_response_count(by_session[session.session_id], questions), _percent(sum(r.is_correct is True for r in academic), len(academic))))
-    moving = rolling_average([row[3] for row in eligible_sessions], 8)
-    overview_trend = [{"label": row[0].session_date.strftime("%d/%m/%Y"), "participation": row[1], "accuracy": moving[index]} for index, row in enumerate(eligible_sessions)]
-    participation_trend = [{"label": row[0].session_date.strftime("%d/%m/%Y"), "participants": row[1], "responses": row[2]} for row in eligible_sessions]
-    academic = [r for r in responses if r.is_correct is not None]
+        sample = by_session[session.session_id]
+        distinct = len({response.participant_id for response in sample})
+        if distinct < privacy_k:
+            continue
+        academic_sample = [response for response in sample if response.is_correct is not None]
+        academic_distinct = len({response.participant_id for response in academic_sample})
+        accuracy = (
+            _percent(sum(response.is_correct is True for response in academic_sample), len(academic_sample))
+            if academic_distinct >= privacy_k
+            else None
+        )
+        eligible_sessions.append({
+            "session": session,
+            "participants": distinct,
+            "responses": valid_response_count(sample, questions),
+            "accuracy": accuracy,
+            "academic_answers": len(academic_sample) if accuracy is not None else 0,
+            "academic_questions": len({response.question_id for response in academic_sample}) if accuracy is not None else 0,
+        })
+
+    academic_sessions = [row for row in eligible_sessions if row["accuracy"] is not None]
+    moving_accuracy = rolling_average([row["accuracy"] for row in academic_sessions], 8)
+    learning_trend = [{
+        "label": row["session"].session_date.strftime("%d/%m/%Y"),
+        "accuracy": row["accuracy"],
+        "moving_accuracy": round(moving_accuracy[index], 1) if moving_accuracy[index] is not None else None,
+        "answers": row["academic_answers"],
+        "questions": row["academic_questions"],
+    } for index, row in enumerate(academic_sessions)]
+    moving_by_session = {
+        row["session"].session_id: learning_trend[index]["moving_accuracy"]
+        for index, row in enumerate(academic_sessions)
+    }
+    overview_trend = [{
+        "label": row["session"].session_date.strftime("%d/%m/%Y"),
+        "participation": row["participants"],
+        "accuracy": moving_by_session.get(row["session"].session_id),
+    } for row in eligible_sessions]
+    participation_trend = [{
+        "label": row["session"].session_date.strftime("%d/%m/%Y"),
+        "participants": row["participants"],
+        "responses": row["responses"],
+    } for row in eligible_sessions]
+
+    monthly_participation_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in eligible_sessions:
+        monthly_participation_groups[_month_key(row["session"].session_date)].append(row)
+    monthly_participation = []
+    for month, rows in sorted(monthly_participation_groups.items()):
+        monthly_participation.append({
+            "month": month,
+            "label": _month_label(month),
+            "participants": sum(row["participants"] for row in rows),
+            "responses": sum(row["responses"] for row in rows),
+            "presentations": len({row["session"].presentation_id for row in rows}),
+        })
+
+    academic = [response for response in responses if response.is_correct is not None]
     total_scores = Counter()
     for response in academic:
-        total_scores[response.participant_id] += int(response.is_correct is True)
-    participants_total = sum(s.participants for s in sessions); capacity = sum(s.participants * s.interactive_slides for s in sessions)
+        total_scores[(response.session_id, response.participant_id)] += int(response.is_correct is True)
+    participants_total = sum(session.participants for session in sessions)
+    capacity = sum(session.participants * session.interactive_slides for session in sessions)
     valid_responses = valid_response_count(responses, questions)
     overall_visible = participants_total >= privacy_k
-    academic_visible = len({r.participant_id for r in academic}) >= privacy_k
-    question_performance = []; topic_acc: dict[str, list[Response]] = defaultdict(list)
+    academic_visible = len({(response.session_id, response.participant_id) for response in academic}) >= privacy_k
+
+    question_performance = []
+    topic_acc: dict[str, list[Response]] = defaultdict(list)
     for question in questions:
-        sample = [r for r in by_question[question.question_id] if r.is_correct is not None]
-        distinct = len({r.participant_id for r in sample})
-        if distinct < privacy_k: continue
-        correct = sum(r.is_correct is True for r in sample)
+        sample = [response for response in by_question[question.question_id] if response.is_correct is not None]
+        distinct = len({(response.session_id, response.participant_id) for response in sample})
+        if distinct < privacy_k:
+            continue
+        correct = sum(response.is_correct is True for response in sample)
         accuracy = _percent(correct, len(sample))
         low, high = wilson_interval(correct, len(sample))
-        correct_choice = question.choices[question.correct_indices[0]] if question.correct_indices and question.correct_indices[0] < len(question.choices) else ""
+        correct_choice = (
+            question.choices[question.correct_indices[0]]
+            if question.correct_indices and question.correct_indices[0] < len(question.choices)
+            else ""
+        )
         answer_counts = Counter(str(response.value) for response in sample)
         distractors = ineffective_distractors(answer_counts, correct_choice)
-        discrimination = point_biserial([bool(response.is_correct) for response in sample], [total_scores[response.participant_id] for response in sample])
+        discrimination = point_biserial(
+            [bool(response.is_correct) for response in sample],
+            [total_scores[(response.session_id, response.participant_id)] for response in sample],
+        )
+        presentation = presentation_by_id.get(question.presentation_id)
         question_performance.append({
-            "question": question.title, "topic": question.topic or "Não classificado",
-            "accuracy": accuracy, "responses": len(sample), "difficulty": difficulty_band(accuracy / 100),
-            "wilson_low": round(low * 100, 1), "wilson_high": round(high * 100, 1),
+            "question": question.title,
+            "topic": question.topic or "Não classificado",
+            "subtopic": question.subtopic,
+            "presentation": presentation.title if presentation else None,
+            "date": presentation.session_date.isoformat() if presentation else None,
+            "accuracy": accuracy,
+            "responses": len(sample),
+            "difficulty": difficulty_band(accuracy / 100),
+            "wilson_low": round(low * 100, 1),
+            "wilson_high": round(high * 100, 1),
             "discrimination": round(discrimination, 3) if discrimination is not None else None,
             "ineffective_distractors": distractors,
         })
         topic_acc[question.topic or "Não classificado"].extend(sample)
+
     difficulty_counts: dict[str, list[float]] = defaultdict(list)
-    for item in question_performance: difficulty_counts[difficulty_band(item["accuracy"] / 100)].append(item["accuracy"])
-    difficulty_labels = {"very_hard": "Muito difícil", "hard": "Difícil", "medium": "Moderada", "easy": "Fácil", "very_easy": "Muito fácil"}
-    by_difficulty = [{"label": difficulty_labels[key], "accuracy": round(sum(values) / len(values), 1), "questions": len(values)} for key, values in difficulty_counts.items()]
-    profile_questions = {q.question_id for q in questions if q.kind == QuestionKind.PROFILE}
-    profile_people: dict[str, set[str]] = defaultdict(set)
+    for item in question_performance:
+        difficulty_counts[item["difficulty"]].append(item["accuracy"])
+    difficulty_labels = {
+        "very_hard": "Muito difícil",
+        "hard": "Difícil",
+        "medium": "Moderada",
+        "easy": "Fácil",
+        "very_easy": "Muito fácil",
+    }
+    by_difficulty = [{
+        "label": difficulty_labels[key],
+        "accuracy": round(sum(values) / len(values), 1),
+        "questions": len(values),
+    } for key, values in difficulty_counts.items()]
+
+    profile_questions = {question.question_id for question in questions if question.kind == QuestionKind.PROFILE}
+    profile_people: dict[str, set[tuple[str, str]]] = defaultdict(set)
     for response in responses:
-        if response.question_id in profile_questions: profile_people[str(response.value)].add(response.participant_id)
+        if response.question_id in profile_questions:
+            profile_people[str(response.value)].add((response.session_id, response.participant_id))
     profile_counts = Counter({label: len(people) for label, people in profile_people.items()})
     profile_responders = set().union(*profile_people.values()) if profile_people else set()
-    profile_filters_safe = bool(profile_counts) and all(value >= privacy_k for value in profile_counts.values()) and len(profile_responders) == participants_total and sum(profile_counts.values()) == participants_total
+    profile_filters_safe = (
+        bool(profile_counts)
+        and all(value >= privacy_k for value in profile_counts.values())
+        and len(profile_responders) == participants_total
+        and sum(profile_counts.values()) == participants_total
+    )
     visible_profile_counts = dict(profile_counts) if profile_filters_safe else {}
     profile_total = sum(visible_profile_counts.values())
-    by_profile = [{"label": key, "value": round(100 * value / profile_total, 1)} for key, value in visible_profile_counts.items()] if profile_total else []
-    format_counts = Counter(q.kind.value for q in questions); format_total = sum(format_counts.values()); by_format = [{"label": key, "value": round(100 * value / format_total, 1)} for key, value in format_counts.items()]
-    evaluation_ids = {q.question_id for q in questions if q.kind == QuestionKind.EVALUATION}; nps_ids = {q.question_id for q in questions if q.kind == QuestionKind.NPS}
-    evaluation_rows = [r for r in responses if r.question_id in evaluation_ids and isinstance(r.value, (int, float))]
-    nps_rows = [r for r in responses if r.question_id in nps_ids and isinstance(r.value, (int, float))]
-    evaluator_ids = {r.participant_id for r in evaluation_rows}
+    by_profile = (
+        [{"label": key, "value": round(100 * value / profile_total, 1)} for key, value in visible_profile_counts.items()]
+        if profile_total else []
+    )
+    format_counts = Counter(question.kind.value for question in questions)
+    format_total = sum(format_counts.values())
+    by_format = [{"label": key, "value": round(100 * value / format_total, 1)} for key, value in format_counts.items()]
+
+    evaluation_questions = [question for question in questions if question.kind == QuestionKind.EVALUATION]
+    evaluation_ids = {question.question_id for question in evaluation_questions}
+    nps_ids = {question.question_id for question in questions if question.kind == QuestionKind.NPS}
+    evaluation_rows = [
+        response for response in responses
+        if response.question_id in evaluation_ids and isinstance(response.value, (int, float))
+    ]
+    nps_rows = [
+        response for response in responses
+        if response.question_id in nps_ids and isinstance(response.value, (int, float))
+    ]
+    evaluator_ids = {(response.session_id, response.participant_id) for response in evaluation_rows}
     evaluation = evaluation_rows if len(evaluator_ids) >= privacy_k else []
-    nps_values = [r.value for r in nps_rows] if len({r.participant_id for r in nps_rows}) >= privacy_k else []
+    nps_respondents = {(response.session_id, response.participant_id) for response in nps_rows}
+    nps_values = [response.value for response in nps_rows] if len(nps_respondents) >= privacy_k else []
+
+    criterion_meta: dict[str, dict[str, str]] = {}
+    criterion_by_question: dict[str, str] = {}
+    for question in evaluation_questions:
+        normalized = _normalized_label(question.title)
+        key = _criterion_key(question.title)
+        criterion_meta.setdefault(normalized, {"key": key, "label": " ".join(question.title.split())})
+        criterion_by_question[question.question_id] = normalized
+    criterion_rows: dict[str, list[Response]] = defaultdict(list)
+    for response in evaluation:
+        normalized = criterion_by_question.get(response.question_id)
+        if normalized:
+            criterion_rows[normalized].append(response)
+
     criteria = []
-    for q in questions:
-        values = [float(r.value) for r in by_question[q.question_id] if isinstance(r.value, (int, float))]
-        if q.kind == QuestionKind.EVALUATION and len({r.participant_id for r in by_question[q.question_id]}) >= privacy_k:
-            criteria.append({"label": q.title, "score": round(sum(values) / len(values), 2) if values else None})
+    for normalized, sample in sorted(criterion_rows.items(), key=lambda item: criterion_meta[item[0]]["label"]):
+        respondent_count = len({(response.session_id, response.participant_id) for response in sample})
+        if respondent_count < privacy_k:
+            continue
+        monthly_groups: dict[str, list[Response]] = defaultdict(list)
+        for response in sample:
+            session = session_by_id.get(response.session_id)
+            if session:
+                monthly_groups[_month_key(session.session_date)].append(response)
+        trend = []
+        for month, month_sample in sorted(monthly_groups.items()):
+            month_respondents = {(response.session_id, response.participant_id) for response in month_sample}
+            if len(month_respondents) < privacy_k:
+                continue
+            trend.append({
+                "month": month,
+                "label": _month_label(month),
+                "score": round(sum(float(response.value) for response in month_sample) / len(month_sample), 2),
+                "responses": len(month_respondents),
+            })
+        delta = round(trend[-1]["score"] - trend[-2]["score"], 2) if len(trend) > 1 else None
+        criteria.append({
+            **criterion_meta[normalized],
+            "score": round(sum(float(response.value) for response in sample) / len(sample), 2),
+            "responses": respondent_count,
+            "delta": delta,
+            "trend": trend,
+        })
+
+    evaluation_months: dict[str, list[Response]] = defaultdict(list)
+    nps_months: dict[str, list[Response]] = defaultdict(list)
+    for response in evaluation:
+        session = session_by_id.get(response.session_id)
+        if session:
+            evaluation_months[_month_key(session.session_date)].append(response)
+    for response in nps_rows:
+        session = session_by_id.get(response.session_id)
+        if session:
+            nps_months[_month_key(session.session_date)].append(response)
+    experience_trend = []
+    for month, sample in sorted(evaluation_months.items()):
+        month_evaluators = {(response.session_id, response.participant_id) for response in sample}
+        if len(month_evaluators) < privacy_k:
+            continue
+        month_nps = nps_months.get(month, [])
+        month_nps_values = (
+            [response.value for response in month_nps]
+            if len({(response.session_id, response.participant_id) for response in month_nps}) >= privacy_k
+            else []
+        )
+        experience_trend.append({
+            "month": month,
+            "label": _month_label(month),
+            "score": round(sum(float(response.value) for response in sample) / len(sample), 2),
+            "evaluations": len(month_evaluators),
+            "nps": round(nps(month_nps_values), 1) if month_nps_values else None,
+        })
+
     topic_items = []
-    presentation_dates = {presentation.presentation_id: presentation.session_date for presentation in presentations}
     for topic, sample in topic_acc.items():
-        accuracy = _percent(sum(r.is_correct is True for r in sample), len(sample))
-        topic_questions = [question for question in questions if (question.topic or "Não classificado") == topic]
+        accuracy = _percent(sum(response.is_correct is True for response in sample), len(sample))
+        topic_questions = [
+            question for question in questions
+            if (question.topic or "Não classificado") == topic
+        ]
         question_count = len(topic_questions)
-        occurrence_dates = [presentation_dates[question.presentation_id] for question in topic_questions if question.presentation_id in presentation_dates]
-        opportunity = "Reforçar" if accuracy is not None and accuracy < 60 and len(sample) >= 30 else ("Pouco abordado" if question_count <= 1 else "Manter e avançar")
+        occurrence_dates = [
+            presentation_dates[question.presentation_id]
+            for question in topic_questions
+            if question.presentation_id in presentation_dates
+        ]
+        opportunity = (
+            "Reforçar"
+            if accuracy is not None and accuracy < 60 and len(sample) >= 30
+            else ("Pouco abordado" if question_count <= 1 else "Manter e avançar")
+        )
         topic_items.append({
-            "topic": topic, "questions": question_count, "accuracy": accuracy,
+            "topic": topic,
+            "questions": question_count,
+            "responses": len(sample),
+            "accuracy": accuracy,
             "difficulty": difficulty_labels[difficulty_band(accuracy / 100)] if accuracy is not None else None,
             "recurrence": len({question.presentation_id for question in topic_questions}),
             "last_occurrence": max(occurrence_dates).isoformat() if occurrence_dates else None,
             "opportunity": opportunity,
         })
-    filters = {"periods": ["Últimos 12 meses"] + sorted({str(s.session_date.year) for s in sessions}, reverse=True), "presentations": ["Todas as apresentações"] + [p.title for p in presentations], "profiles": ["Todos os perfis"] + sorted(visible_profile_counts), "formats": ["Todos os formatos"] + sorted(format_counts), "topics": ["Todos os assuntos"] + sorted(topic_acc), "difficulties": ["Todas as dificuldades"] + list(difficulty_labels.values())}
-    accuracy_rate = _percent(sum(r.is_correct is True for r in academic), len(academic)) if academic_visible else None
+    topic_items.sort(key=lambda item: (-item["questions"], item["topic"]))
+
+    academic_months: dict[str, list[Response]] = defaultdict(list)
+    for response in academic:
+        session = session_by_id.get(response.session_id)
+        if session:
+            academic_months[_month_key(session.session_date)].append(response)
+    historical_monthly = []
+    for month, sample in sorted(academic_months.items()):
+        distinct = {(response.session_id, response.participant_id) for response in sample}
+        if len(distinct) < privacy_k:
+            continue
+        historical_monthly.append({
+            "month": month,
+            "label": _month_label(month),
+            "accuracy": _percent(sum(response.is_correct is True for response in sample), len(sample)),
+            "answers": len(sample),
+            "questions": len({response.question_id for response in sample}),
+        })
+    historical_candidates = [item for item in question_performance if item["responses"] >= 30]
+    strongest_questions = sorted(
+        historical_candidates,
+        key=lambda item: (-item["accuracy"], -item["responses"], item["question"]),
+    )[:5]
+    priority_questions = sorted(
+        [item for item in historical_candidates if item["accuracy"] < 60],
+        key=lambda item: (item["accuracy"], -item["responses"], item["question"]),
+    )[:6]
+
+    filters = {
+        "periods": ["Últimos 12 meses"] + sorted({str(session.session_date.year) for session in sessions}, reverse=True),
+        "presentations": ["Todas as apresentações"] + [presentation.title for presentation in presentations],
+        "profiles": ["Todos os perfis"] + sorted(visible_profile_counts),
+        "formats": ["Todos os formatos"] + sorted(format_counts),
+        "topics": ["Todos os assuntos"] + sorted(topic_acc),
+        "difficulties": ["Todas as dificuldades"] + list(difficulty_labels.values()),
+    }
+    accuracy_rate = (
+        _percent(sum(response.is_correct is True for response in academic), len(academic))
+        if academic_visible else None
+    )
     response_rate = _percent(valid_responses, capacity) if overall_visible else None
-    score = round(sum(float(r.value) for r in evaluation) / len(evaluation), 2) if evaluation else None
+    score = round(sum(float(response.value) for response in evaluation) / len(evaluation), 2) if evaluation else None
     evaluation_count = len(evaluator_ids) if len(evaluator_ids) >= privacy_k else (0 if not evaluator_ids else None)
-    evaluation_rate = _percent(len(evaluator_ids), participants_total) if len(evaluator_ids) >= privacy_k and overall_visible else None
+    evaluation_rate = (
+        _percent(len(evaluator_ids), participants_total)
+        if len(evaluator_ids) >= privacy_k and overall_visible else None
+    )
+    improvement = (
+        round(learning_trend[-1]["moving_accuracy"] - learning_trend[0]["moving_accuracy"], 1)
+        if len(learning_trend) > 1 else None
+    )
+    highlights = []
+    if overall_visible:
+        highlights.append({
+            "title": "Participação que se transforma em evidência",
+            "detail": f"{participants_total} participações em {len(presentations)} encontros do Desafio Trauma.",
+        })
+    if accuracy_rate is not None:
+        highlights.append({
+            "title": "Aprendizado monitorado continuamente",
+            "detail": f"Acurácia histórica de {accuracy_rate:.1f}% em {len(academic)} respostas acadêmicas.",
+        })
+    if score is not None:
+        highlights.append({
+            "title": "Experiência reconhecida pelos participantes",
+            "detail": f"Avaliação consolidada de {score:.2f}/5, com {evaluation_count or 0} avaliadores.",
+        })
+    if monthly_participation:
+        busiest = max(monthly_participation, key=lambda item: item["participants"])
+        highlights.append({
+            "title": "Alcance mensal em perspectiva",
+            "detail": f"{busiest['label']} concentrou {busiest['participants']} participações, o maior volume da série.",
+        })
+    reinforce_topics = sorted(
+        [item for item in topic_items if item["opportunity"] == "Reforçar"],
+        key=lambda item: item["accuracy"],
+    )
+    if reinforce_topics:
+        highlights.append({
+            "title": "Dados que orientam o próximo encontro",
+            "detail": f"{reinforce_topics[0]['topic']} aparece como prioridade histórica de reforço ({reinforce_topics[0]['accuracy']:.1f}% de acurácia).",
+        })
+
     snapshot = {
-        "metadata": {"generated_at": datetime.now(timezone.utc).isoformat(), "source_updated_at": max((p.captured_at for p in presentations if p.captured_at), default=datetime.now(timezone.utc)).isoformat(), "privacy_note": f"Grupos com menos de {privacy_k} participantes distintos são excluídos dos detalhes e dos totais públicos."},
+        "metadata": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_updated_at": max(
+                (presentation.captured_at for presentation in presentations if presentation.captured_at),
+                default=datetime.now(timezone.utc),
+            ).isoformat(),
+            "privacy_note": f"Grupos com menos de {privacy_k} participantes distintos são excluídos dos detalhes e dos totais públicos.",
+        },
         "filters": filters,
-        "overview": {"presentations": len(presentations), "participants": participants_total if overall_visible else None, "responses": valid_responses if overall_visible else None, "response_rate": response_rate, "accuracy_rate": accuracy_rate, "experience_score": score, "trend": overview_trend, "highlights": []},
-        "participation": {"total_participants": participants_total if overall_visible else None, "total_responses": valid_responses if overall_visible else None, "response_rate": response_rate, "evaluators": evaluation_count, "evaluation_rate": evaluation_rate, "presentations": len(presentations), "trend": participation_trend, "by_profile": by_profile, "by_format": by_format},
-        "learning": {"accuracy_rate": accuracy_rate, "questions": len([q for q in questions if q.kind == QuestionKind.ACADEMIC]), "answers": len(academic), "improvement": (overview_trend[-1]["accuracy"] - overview_trend[0]["accuracy"]) if len(overview_trend) > 1 and overview_trend[-1]["accuracy"] is not None and overview_trend[0]["accuracy"] is not None else None, "trend": [{"label": row["label"], "accuracy": row["accuracy"]} for row in overview_trend], "by_difficulty": by_difficulty, "question_performance": question_performance},
-        "experience": {"score": score, "nps": nps(nps_values), "evaluations": evaluation_count, "evaluation_rate": evaluation_rate, "recommendation_rate": _percent(sum(value >= 9 for value in nps_values), len(nps_values)), "criteria": criteria, "trend": []},
-        "topics": {"coverage": len(topic_items), "mapped_questions": sum(q.topic is not None for q in questions), "opportunities": sum(item["opportunity"] in {"Reforçar", "Pouco abordado"} for item in topic_items), "items": topic_items},
-        "metric_dictionary": [{"metric": "Taxa de resposta", "definition": "Respostas válidas divididas por participantes vezes slides interativos."}, {"metric": "Acurácia", "definition": "Percentual de respostas acadêmicas corretas; exclui perfil e avaliação."}, {"metric": "NPS", "definition": "Percentual de promotores menos percentual de detratores."}],
+        "overview": {
+            "presentations": len(presentations),
+            "participants": participants_total if overall_visible else None,
+            "responses": valid_responses if overall_visible else None,
+            "response_rate": response_rate,
+            "accuracy_rate": accuracy_rate,
+            "experience_score": score,
+            "trend": overview_trend,
+            "highlights": highlights,
+        },
+        "participation": {
+            "total_participants": participants_total if overall_visible else None,
+            "total_responses": valid_responses if overall_visible else None,
+            "response_rate": response_rate,
+            "evaluators": evaluation_count,
+            "evaluation_rate": evaluation_rate,
+            "presentations": len(presentations),
+            "trend": participation_trend,
+            "monthly": monthly_participation,
+            "by_profile": by_profile,
+            "by_format": by_format,
+        },
+        "learning": {
+            "accuracy_rate": accuracy_rate,
+            "questions": len([question for question in questions if question.kind == QuestionKind.ACADEMIC]),
+            "answers": len(academic),
+            "improvement": improvement,
+            "trend": learning_trend,
+            "by_difficulty": by_difficulty,
+            "question_performance": question_performance,
+            "historical": {
+                "by_month": historical_monthly,
+                "by_topic": topic_items,
+                "strongest_questions": strongest_questions,
+                "priority_questions": priority_questions,
+            },
+        },
+        "experience": {
+            "score": score,
+            "nps": nps(nps_values),
+            "evaluations": evaluation_count,
+            "evaluation_rate": evaluation_rate,
+            "recommendation_rate": _percent(sum(value >= 9 for value in nps_values), len(nps_values)),
+            "criteria": criteria,
+            "trend": experience_trend,
+        },
+        "topics": {
+            "coverage": len(topic_items),
+            "mapped_questions": sum(question.topic is not None for question in questions),
+            "opportunities": sum(item["opportunity"] in {"Reforçar", "Pouco abordado"} for item in topic_items),
+            "items": topic_items,
+        },
+        "metric_dictionary": [
+            {"metric": "Taxa de resposta", "definition": "Respostas válidas divididas por participantes vezes slides interativos."},
+            {"metric": "Acurácia", "definition": "Percentual de respostas acadêmicas corretas; exclui perfil e avaliação."},
+            {"metric": "Média móvel", "definition": "Acurácia média das oito sessões acadêmicas elegíveis mais recentes."},
+            {"metric": "NPS", "definition": "Percentual de promotores menos percentual de detratores."},
+        ],
         "public_files": public_files or [],
     }
     if include_views:
@@ -381,7 +739,10 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
                 filtered = build_public_snapshot(*subset, privacy_k=privacy_k, public_files=[], include_views=False)
                 views.append({
                     "filters": {filter_name: value},
-                    "snapshot": {key: filtered[key] for key in ("overview", "participation", "learning", "experience", "topics")},
+                    "snapshot": {
+                        key: filtered[key]
+                        for key in ("overview", "participation", "learning", "experience", "topics")
+                    },
                 })
         snapshot["filters"]["views"] = views
     return snapshot
@@ -453,8 +814,8 @@ def validate_public_snapshot(snapshot: dict[str, Any]) -> None:
         "metadata": {"generated_at", "source_updated_at", "privacy_note"},
         "filters": {"periods", "presentations", "profiles", "formats", "topics", "difficulties", "views"},
         "overview": {"presentations", "participants", "responses", "response_rate", "accuracy_rate", "experience_score", "trend", "highlights"},
-        "participation": {"total_participants", "total_responses", "response_rate", "evaluators", "evaluation_rate", "presentations", "trend", "by_profile", "by_format"},
-        "learning": {"accuracy_rate", "questions", "answers", "improvement", "trend", "by_difficulty", "question_performance"},
+        "participation": {"total_participants", "total_responses", "response_rate", "evaluators", "evaluation_rate", "presentations", "trend", "monthly", "by_profile", "by_format"},
+        "learning": {"accuracy_rate", "questions", "answers", "improvement", "trend", "by_difficulty", "question_performance", "historical"},
         "experience": {"score", "nps", "evaluations", "evaluation_rate", "recommendation_rate", "criteria", "trend"},
         "topics": {"coverage", "mapped_questions", "opportunities", "items"},
     }
