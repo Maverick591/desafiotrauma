@@ -194,6 +194,42 @@ class SupabaseRepository:
             result.append(ManualImport(row["id"], local, row["presentation_external_id"], date.fromisoformat(row["event_date"]), row["presentation_title"]))
         return result
 
+    def restore_source(self, presentation_external_id: str, destination: Path) -> tuple[Path, dict[str, Any]] | None:
+        """Materialize a previously validated raw export from private Storage."""
+        rows = self.client.table("source_files").select(
+            "storage_bucket,storage_path,mime_type"
+        ).eq("presentation_external_id", presentation_external_id).execute().data or []
+        xlsx_source = next(
+            (row for row in rows if str(row.get("storage_path") or "").endswith(".xlsx")),
+            None,
+        )
+        deck_source = next(
+            (row for row in rows if str(row.get("storage_path") or "").endswith(".slide_deck.json")),
+            None,
+        )
+        if not xlsx_source or not deck_source:
+            return None
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            xlsx_path = destination / f"{presentation_external_id}.xlsx"
+            deck_path = destination / f"{presentation_external_id}.slide_deck.json"
+            xlsx_path.write_bytes(self.client.storage.from_(
+                xlsx_source.get("storage_bucket") or self.PRIVATE_BUCKET
+            ).download(xlsx_source["storage_path"]))
+            deck_bytes = self.client.storage.from_(
+                deck_source.get("storage_bucket") or self.PRIVATE_BUCKET
+            ).download(deck_source["storage_path"])
+            deck_path.write_bytes(deck_bytes)
+            payload = json.loads(deck_bytes.decode("utf-8"))
+            deck = payload.get("slide_deck") if isinstance(payload, dict) else None
+            if not isinstance(deck, dict):
+                return None
+            return xlsx_path, deck
+        except Exception:
+            # Cached sources are an optimization. A corrupt or unavailable
+            # cache falls back to a fresh authoritative Mentimeter export.
+            return None
+
     def complete_manual_import(self, import_id: str, row_count: int) -> None:
         self.client.table("manual_imports").update({"status": "imported", "row_count": row_count, "accepted_count": row_count, "imported_at": datetime.now(timezone.utc).isoformat()}).eq("id", import_id).execute()
 
@@ -269,6 +305,9 @@ class LocalRepository:
 
     def pending_manual_imports(self, destination: Path):
         return []
+
+    def restore_source(self, presentation_external_id: str, destination: Path):
+        return None
 
     def finish_run(self, status: str, result: dict[str, Any], usage: dict[str, Any] | None = None) -> None:
         return None

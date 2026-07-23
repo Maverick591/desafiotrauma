@@ -411,6 +411,31 @@ def test_local_pipeline_end_to_end_creates_last_good_only_after_publish(
     assert published["experience"]["evaluation_rate"] == 25.7
 
 
+def test_backfill_reuses_private_source_before_requesting_a_new_export(
+    tmp_path: Path, synthetic_reference_xlsx: Path, synthetic_slide_deck: dict
+) -> None:
+    class CachedRepository(LocalRepository):
+        def restore_source(self, presentation_id, destination):
+            assert presentation_id == "p1"
+            return synthetic_reference_xlsx, synthetic_slide_deck
+
+    class FakeClient:
+        def discover(self):
+            return [PresentationRef("p1", "Desafio Trauma - 27/05/2026", "/p1")]
+
+        def fetch(self, *_args):
+            raise AssertionError("a cached private source must be reused")
+
+    result = Pipeline(
+        client=FakeClient(),
+        repository=CachedRepository(tmp_path / "repository"),
+        workdir=tmp_path / "work",
+    ).sync("backfill")
+
+    assert result["presentations"] == 1
+    assert result["responses"] == 208
+
+
 def test_ai_redacts_pii_uses_structured_parse_and_flags_low_confidence() -> None:
     captured = {}
 

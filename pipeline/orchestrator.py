@@ -91,10 +91,14 @@ class Pipeline:
                 xlsx_path, deck = Path(item.local_path), {"name": item.title, "slides": []}
             else:
                 ref = item
-                xlsx_path, deck = self.client.fetch(ref, self.workdir / "raw")
-                deck_path = self.workdir / "raw" / f"{ref.presentation_id}.slide_deck.json"
-                self.repository.store_source(xlsx_path, f"raw/{ref.presentation_id}/{xlsx_path.name}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ref.presentation_id)
-                self.repository.store_source(deck_path, f"raw/{ref.presentation_id}/{deck_path.name}", "application/json", ref.presentation_id)
+                cached = self.repository.restore_source(ref.presentation_id, self.workdir / "raw") if mode == "backfill" else None
+                if cached:
+                    xlsx_path, deck = cached
+                else:
+                    xlsx_path, deck = self.client.fetch(ref, self.workdir / "raw")
+                    deck_path = self.workdir / "raw" / f"{ref.presentation_id}.slide_deck.json"
+                    self.repository.store_source(xlsx_path, f"raw/{ref.presentation_id}/{xlsx_path.name}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ref.presentation_id)
+                    self.repository.store_source(deck_path, f"raw/{ref.presentation_id}/{deck_path.name}", "application/json", ref.presentation_id)
             try:
                 parsed_questions, parsed_responses = parse_workbook(xlsx_path, ref.presentation_id)
             except EmptyPresentationError:
