@@ -255,6 +255,26 @@ def test_parser_supports_official_voters_export_with_scales_and_sessions(tmp_pat
     } == {date(2026, 5, 20), date(2026, 5, 27)}
 
 
+def test_voters_parser_deduplicates_repeated_official_answer_columns(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-voters-column.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Voters"
+    sheet.append([
+        "Date (UTC)", "Session", "Voter",
+        "Qual a melhor conduta?: Answer",
+        "Qual a melhor conduta?: Answer",
+    ])
+    sheet.append(["2026-05-27", 1, 1, "Operar", "Operar"])
+    workbook.save(path)
+
+    questions, responses = parse_workbook(path, "presentation")
+
+    assert len(questions) == 1
+    assert len(responses) == 1
+    assert responses[0].question_id == questions[0].question_id
+
+
 def test_parser_preserves_distinct_sessions_from_same_presentation(tmp_path: Path) -> None:
     path = tmp_path / "multiple-sessions.xlsx"
     workbook = Workbook(); sheet = workbook.active

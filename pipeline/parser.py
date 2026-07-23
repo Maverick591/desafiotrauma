@@ -206,6 +206,7 @@ def _parse_voters_export(
     voter_column = normalized.index("voter")
 
     questions: list[Question] = []
+    questions_by_id: dict[str, Question] = {}
     by_column: dict[int, Question] = {}
     slide_by_group: dict[str, int] = {}
     for column, raw_header in enumerate(headers):
@@ -229,14 +230,18 @@ def _parse_voters_export(
         else:
             continue
         slide_index = slide_by_group.setdefault(group, len(slide_by_group) + 1)
-        question = Question(
-            stable_id("question", presentation_id, slide_index, title),
-            presentation_id,
-            slide_index,
-            title,
-            _kind(title, raw_type),
-        )
-        questions.append(question)
+        question_id = stable_id("question", presentation_id, slide_index, title)
+        question = questions_by_id.get(question_id)
+        if question is None:
+            question = Question(
+                question_id,
+                presentation_id,
+                slide_index,
+                title,
+                _kind(title, raw_type),
+            )
+            questions_by_id[question_id] = question
+            questions.append(question)
         by_column[column] = question
 
     if not questions:
