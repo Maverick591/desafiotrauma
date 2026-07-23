@@ -17,3 +17,4 @@ pipeline-artifacts/
 .pipeline-data/
 .npm-cache/
 .superpowers/
+supabase/.temp/

@@ -1,4 +1,20 @@
 project_id = "desafio-trauma"
 
+[auth]
+site_url = "https://maverick591.github.io/desafiotrauma/"
+additional_redirect_urls = ["https://maverick591.github.io/desafiotrauma/admin"]
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[storage.vector]
+enabled = false
+
 [functions.dispatch-ingestion]
 verify_jwt = true
