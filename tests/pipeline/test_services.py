@@ -443,6 +443,22 @@ def test_ai_budget_warns_and_stops() -> None:
     assert classifier.classify("Q", []) .status == "pending_budget"
 
 
+def test_ai_timeout_marks_question_for_review_without_blocking_pipeline() -> None:
+    class TimeoutResponses:
+        def parse(self, **_kwargs):
+            raise TimeoutError("simulated API timeout")
+
+    client = type("Client", (), {"responses": TimeoutResponses()})()
+    classifier = AIClassifier(client=client, budget_usd=5)
+
+    result = classifier.classify("Questão clínica", ["A", "B"])
+
+    assert result.status == "failed"
+    assert result.needs_review is True
+    assert result.primary_topic == "Outros"
+    assert classifier.usage_summary["estimated_cost_usd"] == 0
+
+
 def _sample_data():
     presentation = Presentation("p1", "Desafio Trauma - 27/05/2026", date(2026, 5, 27), "/p1")
     session = Session("s1", "p1", date(2026, 5, 27), 5, 1, complete=True)

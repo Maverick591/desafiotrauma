@@ -29,7 +29,7 @@ class Classification(BaseModel):
     confidence: float = Field(ge=0, le=1)
     rationale: str = Field(min_length=2, max_length=300)
     needs_review: bool = False
-    status: Literal["classified", "pending_budget", "needs_review"] = "classified"
+    status: Literal["classified", "pending_budget", "needs_review", "failed"] = "classified"
 
 
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
@@ -147,7 +147,10 @@ class AIClassifier:
     ):
         if client is None:
             from openai import OpenAI
-            client = OpenAI()
+            client = OpenAI(
+                timeout=float(os.getenv("OPENAI_REQUEST_TIMEOUT_SECONDS", "30")),
+                max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "0")),
+            )
         self.client = client
         self.budget_usd = budget_usd
         self.spent_usd = initial_spend_usd
@@ -184,15 +187,32 @@ class AIClassifier:
             "Classifique a questão médica usando exclusivamente a taxonomia permitida. "
             "Não tente reconstruir dados pessoais redigidos. Entrada: " + safe
         )
-        response = self.client.responses.parse(
-            model=self.model,
-            reasoning={"effort": "low"},
-            store=False,
-            input=prompt,
-            text_format=Classification,
-            max_output_tokens=self.max_output_tokens,
-        )
-        result = response.output_parsed
+        try:
+            response = self.client.responses.parse(
+                model=self.model,
+                reasoning={"effort": "low"},
+                store=False,
+                input=prompt,
+                text_format=Classification,
+                max_output_tokens=self.max_output_tokens,
+            )
+            result = response.output_parsed
+            if result is None:
+                raise RuntimeError("Structured classification was not returned")
+        except Exception:
+            self._log(UsageRecord(0, 0, 0, 0.0, "failed"))
+            return Classification(
+                analysis_role="academic",
+                primary_topic="Outros",
+                subtopic="Classificação automática indisponível",
+                cognitive_task="outro",
+                bloom="compreender",
+                predicted_difficulty="medium",
+                confidence=0,
+                rationale="Classificação automática indisponível; requer revisão humana",
+                needs_review=True,
+                status="failed",
+            )
         if result.confidence < 0.80:
             result.needs_review = True
             result.status = "needs_review"
