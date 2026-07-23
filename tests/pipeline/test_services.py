@@ -48,12 +48,14 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
         def __init__(self) -> None:
             self.value = None
             self.clicked = False
+            self.click_options = {}
 
         def fill(self, value: str) -> None:
             self.value = value
 
-        def click(self) -> None:
+        def click(self, **options) -> None:
             self.clicked = True
+            self.click_options = options
 
     class FakePage:
         def __init__(self) -> None:
@@ -89,6 +91,7 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     assert page.email.value == "admin@example.invalid"
     assert page.password.value == "secret"
     assert page.submit.clicked is True
+    assert page.submit.click_options == {"force": True}
 
 
 def test_capture_accepts_only_json_with_slide_deck() -> None:
