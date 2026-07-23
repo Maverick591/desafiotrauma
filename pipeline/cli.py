@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,4 +44,5 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:
         print(f"pipeline failed closed: {exc}", file=sys.stderr)
+        traceback.print_exc()
         return 1
