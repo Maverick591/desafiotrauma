@@ -179,7 +179,7 @@ class Pipeline:
     def _classify(self, question: Question, force: bool, existing: Question | None) -> Question:
         if question.kind != QuestionKind.ACADEMIC: return question
         if existing and (not self.classifier or (existing.ai_confidence is not None and existing.ai_status not in {"pending_budget", "failed", "unclassified"} and not force)):
-            return replace(question, topic=existing.topic, analysis_role=existing.analysis_role, subtopic=existing.subtopic, cognitive_task=existing.cognitive_task, bloom=existing.bloom, predicted_difficulty=existing.predicted_difficulty, ai_confidence=existing.ai_confidence, ai_rationale=existing.ai_rationale, ai_status=existing.ai_status, taxonomy_version=existing.taxonomy_version, needs_review=existing.needs_review, reviewed_by=existing.reviewed_by, reviewed_at=existing.reviewed_at, review_notes=existing.review_notes)
+            return replace(question, topic=existing.topic, analysis_role=QuestionKind.ACADEMIC.value, subtopic=existing.subtopic, cognitive_task=existing.cognitive_task, bloom=existing.bloom, predicted_difficulty=existing.predicted_difficulty, ai_confidence=existing.ai_confidence, ai_rationale=existing.ai_rationale, ai_status=existing.ai_status, taxonomy_version=existing.taxonomy_version, needs_review=existing.needs_review, reviewed_by=existing.reviewed_by, reviewed_at=existing.reviewed_at, review_notes=existing.review_notes)
         if not self.classifier:
             return question
         result = self.classifier.classify(question.title, question.choices)
@@ -187,7 +187,7 @@ class Pipeline:
 
     @staticmethod
     def _classified_question(question: Question, result) -> Question:
-        return replace(question, topic=result.primary_topic, analysis_role=result.analysis_role, subtopic=result.subtopic, cognitive_task=result.cognitive_task, bloom=result.bloom, predicted_difficulty=result.predicted_difficulty, ai_confidence=result.confidence, ai_rationale=result.rationale, ai_status=result.status, taxonomy_version="desafio-trauma-v1", needs_review=result.needs_review)
+        return replace(question, topic=result.primary_topic, analysis_role=QuestionKind.ACADEMIC.value, subtopic=result.subtopic, cognitive_task=result.cognitive_task, bloom=result.bloom, predicted_difficulty=result.predicted_difficulty, ai_confidence=result.confidence, ai_rationale=result.rationale, ai_status=result.status, taxonomy_version="desafio-trauma-v1", needs_review=result.needs_review)
 
     def _classify_many(
         self,

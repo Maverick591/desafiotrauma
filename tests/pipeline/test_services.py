@@ -559,6 +559,37 @@ def test_pipeline_uses_batch_classifier_for_pending_academic_questions(tmp_path:
     assert [question.topic for question in classified] == ["Tórax", "Tórax"]
 
 
+def test_ai_cannot_override_structural_academic_question_role(tmp_path: Path) -> None:
+    class Classifier:
+        def classify(self, *_args):
+            return Classification(
+                analysis_role="evaluation",
+                primary_topic="Tórax",
+                subtopic="Pleura",
+                cognitive_task="conduta",
+                bloom="aplicar",
+                predicted_difficulty="medium",
+                confidence=.9,
+                rationale="Teste",
+            )
+
+    question = Question(
+        "q1", "p1", 1, "Questão com gabarito", QuestionKind.ACADEMIC,
+        ("A", "B"), (0,),
+    )
+    pipeline = Pipeline(
+        client=object(),
+        repository=LocalRepository(tmp_path / "repository"),
+        classifier=Classifier(),
+        workdir=tmp_path / "work",
+    )
+
+    classified = pipeline._classify(question, False, None)
+
+    assert classified.kind == QuestionKind.ACADEMIC
+    assert classified.analysis_role == "academic"
+
+
 def _sample_data():
     presentation = Presentation("p1", "Desafio Trauma - 27/05/2026", date(2026, 5, 27), "/p1")
     session = Session("s1", "p1", date(2026, 5, 27), 5, 1, complete=True)
