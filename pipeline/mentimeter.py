@@ -85,6 +85,77 @@ class MentimeterClient:
         page.get_by_test_id("login-btn").click(force=True)
         page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
 
+    def _discover_with_page(self, page) -> list[PresentationRef]:
+        page.goto(f"{self.base_url}/app/dashboard", wait_until="domcontentloaded")
+        folder_selector = 'a[href*="/app/folder/"]'
+        page.wait_for_selector(folder_selector, timeout=30_000)
+        folders = page.locator(folder_selector)
+        folder_href = ""
+        for index in range(folders.count()):
+            folder = folders.nth(index)
+            if (folder.inner_text() or "").strip() == "Desafio Trauma":
+                folder_href = folder.get_attribute("href") or ""
+                break
+        if not folder_href:
+            raise RuntimeError('Mentimeter folder "Desafio Trauma" was not found')
+
+        page.goto(urljoin(self.base_url, folder_href), wait_until="domcontentloaded")
+        presentation_selector = 'a[href*="/app/presentation/"][href*="/edit"]'
+        page.wait_for_selector(presentation_selector, timeout=30_000)
+
+        # The library uses a nested overflow container and loads cards in batches.
+        # Require three unchanged, non-loading observations before collecting links.
+        scroll_script = """
+        () => {
+          const elements = Array.from(document.querySelectorAll("*"));
+          const container = elements.find((element) => {
+            const style = getComputedStyle(element);
+            return element.scrollHeight > element.clientHeight + 50
+              && (style.overflowY === "auto" || style.overflowY === "scroll");
+          });
+          const links = document.querySelectorAll(
+            'a[href*="/app/presentation/"][href*="/edit"]'
+          ).length;
+          const loading = document.body.innerText.includes("Loading more...");
+          if (container) {
+            container.scrollTo(0, container.scrollHeight);
+          }
+          return {
+            links,
+            loading,
+            scrollHeight: container ? container.scrollHeight : document.body.scrollHeight
+          };
+        }
+        """
+        previous_signature: tuple[int, int] | None = None
+        stable_observations = 0
+        for _ in range(100):
+            state = page.evaluate(scroll_script)
+            signature = (int(state["links"]), int(state["scrollHeight"]))
+            if signature == previous_signature and not state["loading"]:
+                stable_observations += 1
+            else:
+                stable_observations = 0
+            if stable_observations >= 3:
+                break
+            previous_signature = signature
+            page.wait_for_timeout(350)
+        else:
+            raise RuntimeError("Mentimeter presentation list did not finish loading")
+
+        anchors = page.locator(presentation_selector)
+        result: dict[str, PresentationRef] = {}
+        for index in range(anchors.count()):
+            anchor = anchors.nth(index)
+            title = (anchor.inner_text() or "").strip()
+            href = anchor.get_attribute("href") or ""
+            if not matches_title(title):
+                continue
+            match = re.search(r"/presentation/([^/?]+)", href)
+            if match:
+                result[match.group(1)] = PresentationRef(match.group(1), title, href)
+        return sorted(result.values(), key=lambda ref: ref.session_date)
+
     def discover(self) -> list[PresentationRef]:
         from playwright.sync_api import sync_playwright
 
@@ -93,29 +164,9 @@ class MentimeterClient:
             context = browser.new_context(accept_downloads=True)
             page = context.new_page()
             self._login(page)
-            page.goto(f"{self.base_url}/app/results", wait_until="domcontentloaded")
-            # The results view is virtualized/infinite; scroll until its height stabilizes.
-            previous_height = 0
-            for _ in range(50):
-                current_height = page.evaluate("document.body.scrollHeight")
-                if current_height == previous_height:
-                    break
-                previous_height = current_height
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                page.wait_for_timeout(250)
-            anchors = page.locator('a[href*="/app/presentation/"]')
-            result: dict[str, PresentationRef] = {}
-            for index in range(anchors.count()):
-                anchor = anchors.nth(index)
-                title = (anchor.inner_text() or "").strip()
-                href = anchor.get_attribute("href") or ""
-                if not matches_title(title):
-                    continue
-                match = re.search(r"/presentation/([^/?]+)", href)
-                if match:
-                    result[match.group(1)] = PresentationRef(match.group(1), title, href)
+            result = self._discover_with_page(page)
             browser.close()
-            return sorted(result.values(), key=lambda ref: ref.session_date)
+            return result
 
     def fetch(self, ref: PresentationRef, destination: Path) -> tuple[Path, dict[str, Any]]:
         """Download XLSX and capture the authoritative slide_deck JSON response."""

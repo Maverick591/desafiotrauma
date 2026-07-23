@@ -94,6 +94,82 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     assert page.submit.click_options == {"force": True}
 
 
+def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> None:
+    from pipeline.mentimeter import MentimeterClient
+
+    class FakeLocator:
+        def __init__(self, items) -> None:
+            self.items = items
+
+        def count(self) -> int:
+            return len(self.items)
+
+        def nth(self, index: int):
+            return self.items[index]
+
+    class FakeLink:
+        def __init__(self, text: str, href: str) -> None:
+            self.text = text
+            self.href = href
+
+        def inner_text(self) -> str:
+            return self.text
+
+        def get_attribute(self, name: str):
+            return self.href if name == "href" else None
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+            self.states = iter([
+                {"links": 3, "loading": True, "scrollHeight": 1000},
+                {"links": 6, "loading": False, "scrollHeight": 2000},
+                {"links": 6, "loading": False, "scrollHeight": 2000},
+                {"links": 6, "loading": False, "scrollHeight": 2000},
+                {"links": 6, "loading": False, "scrollHeight": 2000},
+            ])
+
+        def goto(self, url: str, **_kwargs) -> None:
+            self.urls.append(url)
+
+        def wait_for_selector(self, _selector: str, **_kwargs) -> None:
+            return None
+
+        def locator(self, selector: str):
+            if "folder" in selector:
+                return FakeLocator([
+                    FakeLink("Other", "/app/folder/1"),
+                    FakeLink("Desafio Trauma", "/app/folder/2601315"),
+                ])
+            assert 'href*="/edit"' in selector
+            return FakeLocator([
+                FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit?source=dashboard"),
+                FakeLink("Edited November 6, 2024", "/app/presentation/p1/edit?source=dashboard"),
+                FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit?source=dashboard"),
+                FakeLink("Desafio Trauma - 22/07/2026 copy (1)", "/app/presentation/copy/edit"),
+                FakeLink("Desafio Trauma - 22/07/2026", "/app/presentation/p2/edit?source=dashboard"),
+                FakeLink("Desafio Trauma - 22/07/2026", "/app/presentation/p2/edit?source=dashboard"),
+            ])
+
+        def evaluate(self, _script: str):
+            return next(self.states)
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = FakePage()
+    refs = MentimeterClient(email="admin@example.invalid", password="secret")._discover_with_page(page)
+
+    assert page.urls == [
+        "https://www.mentimeter.com/app/dashboard",
+        "https://www.mentimeter.com/app/folder/2601315",
+    ]
+    assert [(ref.presentation_id, ref.title) for ref in refs] == [
+        ("p1", "Desafio Trauma - 06/11/2024"),
+        ("p2", "Desafio Trauma - 22/07/2026"),
+    ]
+
+
 def test_capture_accepts_only_json_with_slide_deck() -> None:
     assert extract_slide_deck({"anything": 1}) is None
     deck = {"slide_deck": {"name": "Desafio Trauma - 27/05/2026", "slides": []}}
