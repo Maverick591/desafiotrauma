@@ -168,6 +168,19 @@ begin
   ) then
     raise exception 'authenticated must be able to execute review_question';
   end if;
+  if has_function_privilege('anon', 'public.is_admin()', 'EXECUTE')
+    or has_function_privilege(
+      'anon',
+      'public.review_feedback(uuid,public.feedback_review_status,text,text,text)',
+      'EXECUTE'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.review_question(uuid,text,text,text,text,text,text,text,text)',
+      'EXECUTE'
+    ) then
+    raise exception 'anonymous callers must not execute administrative RPCs';
+  end if;
   if has_function_privilege(
     'authenticated',
     'public.publish_dashboard_snapshot(uuid,text,jsonb,integer,text,jsonb,jsonb,bigint,bigint,bigint,numeric)',

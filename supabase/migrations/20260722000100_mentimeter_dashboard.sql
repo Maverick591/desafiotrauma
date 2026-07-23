@@ -842,14 +842,14 @@ begin
 end;
 $$;
 
-revoke all on function public.is_admin() from public;
+revoke all on function public.is_admin() from public, anon, authenticated, service_role;
 grant execute on function public.is_admin() to authenticated, service_role;
 revoke all on function public.prevent_admin_audit_mutation() from public;
-revoke all on function public.get_public_dashboard_snapshot() from public;
+revoke all on function public.get_public_dashboard_snapshot() from public, anon, authenticated, service_role;
 grant execute on function public.get_public_dashboard_snapshot() to anon, authenticated, service_role;
-revoke all on function public.review_feedback(uuid, public.feedback_review_status, text, text, text) from public;
+revoke all on function public.review_feedback(uuid, public.feedback_review_status, text, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.review_feedback(uuid, public.feedback_review_status, text, text, text) to authenticated;
-revoke all on function public.review_question(uuid, text, text, text, text, text, text, text, text) from public;
+revoke all on function public.review_question(uuid, text, text, text, text, text, text, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.review_question(uuid, text, text, text, text, text, text, text, text) to authenticated;
 revoke all on function public.replace_mentimeter_presentation(jsonb, jsonb, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function public.replace_mentimeter_presentation(jsonb, jsonb, jsonb, jsonb) to service_role;
