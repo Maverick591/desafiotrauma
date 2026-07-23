@@ -154,7 +154,7 @@ class SupabaseRepository:
     def load_corpus(self):
         p_rows = self._fetch_all("mentimeter_presentations", "id,external_id,title,source_url,metadata", ("id",))
         s_rows = self._fetch_all("mentimeter_sessions", "id,presentation_id,external_id,status,started_at,metadata", ("presentation_id", "id"))
-        q_rows = self._fetch_all("mentimeter_questions", "id,presentation_id,external_id,question_order,question_kind,prompt,options,analysis_role,primary_topic,subtopic,cognitive_task,bloom_level,predicted_difficulty,ai_confidence,ai_rationale,ai_status,taxonomy_version,needs_review,reviewed_by,reviewed_at,review_notes", ("presentation_id", "question_order", "id"))
+        q_rows = self._fetch_all("mentimeter_questions", "id,presentation_id,external_id,question_order,slide_index,question_kind,prompt,options,analysis_role,primary_topic,subtopic,cognitive_task,bloom_level,predicted_difficulty,ai_confidence,ai_rationale,ai_status,taxonomy_version,needs_review,reviewed_by,reviewed_at,review_notes", ("presentation_id", "question_order", "id"))
         r_rows = self._fetch_all("mentimeter_responses", "id,external_id,session_id,question_id,respondent_hash,answer,submitted_at", ("session_id", "question_id", "id"))
         p_db = {row["id"]: row["external_id"] for row in p_rows}; s_db = {row["id"]: row["external_id"] for row in s_rows}; q_db = {row["id"]: row["external_id"] for row in q_rows}
         presentations = []
@@ -171,7 +171,7 @@ class SupabaseRepository:
             options = row.get("options") or []; choice_rows = [value for value in options if isinstance(value, dict) and "label" in value]
             kind = QuestionKind(_kind_from_role(row.get("analysis_role"), row.get("question_kind")))
             questions.append(Question(
-                row["external_id"], p_db[row["presentation_id"]], int(row["question_order"]), row["prompt"], kind,
+                row["external_id"], p_db[row["presentation_id"]], int(row["slide_index"]), row["prompt"], kind,
                 tuple(str(value["label"]) for value in choice_rows), tuple(index for index, value in enumerate(choice_rows) if value.get("correct")),
                 topic=row.get("primary_topic"), analysis_role=row.get("analysis_role"), subtopic=row.get("subtopic"), cognitive_task=row.get("cognitive_task"), bloom=row.get("bloom_level"), predicted_difficulty=row.get("predicted_difficulty"), ai_confidence=row.get("ai_confidence"), ai_rationale=row.get("ai_rationale"), ai_status=row.get("ai_status"), taxonomy_version=row.get("taxonomy_version"), needs_review=bool(row.get("needs_review")), reviewed_by=row.get("reviewed_by"), reviewed_at=_datetime(row.get("reviewed_at")), review_notes=row.get("review_notes"),
             ))
@@ -333,7 +333,7 @@ def question_payload(item: Question, presentation_database_id: str, question_ord
     """Serialize against dedicated migration columns; options remain answer options only."""
     return {
         "external_id": item.question_id, "presentation_id": presentation_database_id,
-        "question_order": question_order, "question_kind": KIND_MAP[item.kind],
+        "question_order": question_order, "slide_index": item.slide_index, "question_kind": KIND_MAP[item.kind],
         "prompt": item.title,
         "options": [{"label": label, "correct": index in item.correct_indices} for index, label in enumerate(item.choices)],
         "is_active": True, "analysis_role": item.analysis_role or item.kind.value,

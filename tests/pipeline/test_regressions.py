@@ -588,6 +588,7 @@ def test_publication_uses_transactional_rpc_as_single_call() -> None:
 def test_question_classification_uses_dedicated_schema_columns() -> None:
     question = Question("q", "p", 1, "Q", QuestionKind.ACADEMIC, ("A",), (0,), topic="Abdome e pelve", analysis_role="academic", subtopic="Baço", cognitive_task="conduta", bloom="aplicar", predicted_difficulty="medium", ai_confidence=.9, ai_rationale="Razão clínica", ai_status="classified", taxonomy_version="v1")
     payload = question_payload(question, "db-p", 1)
+    assert payload["slide_index"] == 1
     assert payload["primary_topic"] == "Abdome e pelve"
     assert payload["bloom_level"] == "aplicar"
     assert payload["ai_status"] == "classified"
