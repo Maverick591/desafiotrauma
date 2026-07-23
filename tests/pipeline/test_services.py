@@ -168,6 +168,74 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
         ("p1", "Desafio Trauma - 06/11/2024"),
         ("p2", "Desafio Trauma - 22/07/2026"),
     ]
+    assert [ref.href for ref in refs] == [
+        "/app/presentation/p1/results?source=dashboard",
+        "/app/presentation/p2/results?source=dashboard",
+    ]
+
+
+def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path) -> None:
+    from pipeline.mentimeter import MentimeterClient
+
+    class FakeLocator:
+        def __init__(self) -> None:
+            self.waited = False
+            self.click_options = None
+
+        def wait_for(self, **_kwargs) -> None:
+            self.waited = True
+
+        def click(self, **options) -> None:
+            self.click_options = options
+
+    class FakeDownload:
+        def save_as(self, destination: Path) -> None:
+            destination.write_bytes(b"xlsx")
+
+    class FakeDownloadContext:
+        value = FakeDownload()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.goto_call = None
+            self.download_button = FakeLocator()
+            self.xlsx_menuitem = FakeLocator()
+            self.roles = []
+
+        def goto(self, *args, **kwargs) -> None:
+            self.goto_call = (args, kwargs)
+
+        def get_by_role(self, role: str, **options):
+            self.roles.append((role, options))
+            return self.download_button if role == "button" else self.xlsx_menuitem
+
+        def expect_event(self, event: str, **_kwargs):
+            assert event == "download"
+            return FakeDownloadContext()
+
+    page = FakePage()
+    ref = PresentationRef("p1", "Desafio Trauma - 27/05/2026", "/app/presentation/p1/results?source=dashboard")
+    path = MentimeterClient(email="admin@example.invalid", password="secret")._download_with_page(
+        page, ref, tmp_path
+    )
+
+    assert page.goto_call == (
+        ("https://www.mentimeter.com/app/presentation/p1/results?source=dashboard",),
+        {"wait_until": "domcontentloaded", "timeout": 45_000},
+    )
+    assert page.roles[0] == ("button", {"name": "Download", "exact": True})
+    assert page.roles[1][0] == "menuitem"
+    assert page.roles[1][1]["name"].search("Download Spreadsheet (XLSX)")
+    assert page.download_button.waited is True
+    assert page.download_button.click_options == {"force": True}
+    assert page.xlsx_menuitem.click_options == {}
+    assert path.read_bytes() == b"xlsx"
 
 
 def test_capture_accepts_only_json_with_slide_deck() -> None:

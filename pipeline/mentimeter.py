@@ -153,7 +153,9 @@ class MentimeterClient:
                 continue
             match = re.search(r"/presentation/([^/?]+)", href)
             if match:
-                result[match.group(1)] = PresentationRef(match.group(1), title, href)
+                presentation_id = match.group(1)
+                results_href = f"/app/presentation/{presentation_id}/results?source=dashboard"
+                result[presentation_id] = PresentationRef(presentation_id, title, results_href)
         return sorted(result.values(), key=lambda ref: ref.session_date)
 
     def discover(self) -> list[PresentationRef]:
@@ -167,6 +169,22 @@ class MentimeterClient:
             result = self._discover_with_page(page)
             browser.close()
             return result
+
+    def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
+        destination.mkdir(parents=True, exist_ok=True)
+        page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
+        download_button = page.get_by_role("button", name="Download", exact=True)
+        download_button.wait_for(state="visible", timeout=45_000)
+        # Fresh browser contexts can retain a consent overlay after login.
+        download_button.click(force=True)
+        xlsx_menuitem = page.get_by_role(
+            "menuitem", name=re.compile(r"Download\s+Spreadsheet\s+\(XLSX\)", re.I)
+        )
+        with page.expect_event("download", timeout=45_000) as download_info:
+            xlsx_menuitem.click()
+        xlsx_path = destination / f"{ref.presentation_id}.xlsx"
+        download_info.value.save_as(xlsx_path)
+        return xlsx_path
 
     def fetch(self, ref: PresentationRef, destination: Path) -> tuple[Path, dict[str, Any]]:
         """Download XLSX and capture the authoritative slide_deck JSON response."""
@@ -192,15 +210,7 @@ class MentimeterClient:
                     return
 
             page.on("response", on_response)
-            page.goto(urljoin(self.base_url, ref.href), wait_until="networkidle")
-            export_button = page.get_by_role("button", name=re.compile("export|download|baixar", re.I)).first
-            export_button.click()
-            xlsx = page.get_by_text(re.compile(r"Excel|XLSX", re.I)).first
-            with page.expect_event("download", timeout=45_000) as download_info:
-                xlsx.click()
-            download = download_info.value
-            xlsx_path = destination / f"{ref.presentation_id}.xlsx"
-            download.save_as(xlsx_path)
+            xlsx_path = self._download_with_page(page, ref, destination)
             page.wait_for_timeout(750)
             browser.close()
         if not captured:
