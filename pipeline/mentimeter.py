@@ -34,8 +34,36 @@ def matches_title(title: str) -> bool:
 
 
 def extract_slide_deck(payload: Any) -> dict[str, Any] | None:
-    if isinstance(payload, dict) and isinstance(payload.get("slide_deck"), dict):
-        return payload["slide_deck"]
+    if isinstance(payload, dict):
+        if isinstance(payload.get("slide_deck"), dict):
+            return payload["slide_deck"]
+        for value in payload.values():
+            deck = extract_slide_deck(value)
+            if deck is not None:
+                return deck
+    elif isinstance(payload, list):
+        for value in payload:
+            deck = extract_slide_deck(value)
+            if deck is not None:
+                return deck
+    return None
+
+
+def remember_json_response(candidates: list[Any], response: Any) -> None:
+    """Record response handles without reading bodies inside Playwright callbacks."""
+    if "json" in (response.headers.get("content-type") or "").lower():
+        candidates.append(response)
+
+
+def extract_latest_slide_deck(candidates: list[Any]) -> dict[str, Any] | None:
+    """Read response bodies only after the active Playwright page operation completes."""
+    for response in reversed(candidates):
+        try:
+            deck = extract_slide_deck(response.json())
+        except Exception:
+            continue
+        if deck is not None:
+            return deck
     return None
 
 
@@ -191,7 +219,7 @@ class MentimeterClient:
         from playwright.sync_api import sync_playwright
 
         destination.mkdir(parents=True, exist_ok=True)
-        captured: list[dict[str, Any]] = []
+        response_candidates: list[Any] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.headless)
             context = browser.new_context(accept_downloads=True)
@@ -199,22 +227,15 @@ class MentimeterClient:
             self._login(page)
 
             def on_response(response) -> None:
-                try:
-                    if "json" not in (response.headers.get("content-type") or "").lower():
-                        return
-                    payload = response.json()
-                    deck = extract_slide_deck(payload)
-                    if deck is not None:
-                        captured.append(deck)
-                except Exception:
-                    return
+                remember_json_response(response_candidates, response)
 
             page.on("response", on_response)
             xlsx_path = self._download_with_page(page, ref, destination)
             page.wait_for_timeout(750)
+            deck = extract_latest_slide_deck(response_candidates)
             browser.close()
-        if not captured:
+        if deck is None:
             raise RuntimeError(f"No JSON response containing slide_deck for {ref.presentation_id}")
         deck_path = destination / f"{ref.presentation_id}.slide_deck.json"
-        deck_path.write_text(json.dumps({"slide_deck": captured[-1]}, ensure_ascii=False), encoding="utf-8")
-        return xlsx_path, captured[-1]
+        deck_path.write_text(json.dumps({"slide_deck": deck}, ensure_ascii=False), encoding="utf-8")
+        return xlsx_path, deck

@@ -8,7 +8,14 @@ import pytest
 from openpyxl import load_workbook
 
 from pipeline.ai import AIClassifier, Classification, redact_pii
-from pipeline.mentimeter import PresentationRef, extract_slide_deck, matches_title, select_presentations
+from pipeline.mentimeter import (
+    PresentationRef,
+    extract_latest_slide_deck,
+    extract_slide_deck,
+    matches_title,
+    remember_json_response,
+    select_presentations,
+)
 from pipeline.models import Presentation, Question, QuestionKind, Response, Session
 from pipeline.orchestrator import Pipeline, SnapshotManager, questions_from_deck
 from pipeline.persistence import LocalRepository
@@ -242,6 +249,27 @@ def test_capture_accepts_only_json_with_slide_deck() -> None:
     assert extract_slide_deck({"anything": 1}) is None
     deck = {"slide_deck": {"name": "Desafio Trauma - 27/05/2026", "slides": []}}
     assert extract_slide_deck(deck) == deck["slide_deck"]
+
+
+def test_response_callback_defers_body_read_until_page_operation_finishes() -> None:
+    class FakeResponse:
+        headers = {"content-type": "application/json; charset=utf-8"}
+
+        def __init__(self) -> None:
+            self.json_calls = 0
+
+        def json(self):
+            self.json_calls += 1
+            return {"data": {"slide_deck": {"name": "Desafio Trauma - 27/05/2026", "slides": []}}}
+
+    response = FakeResponse()
+    candidates = []
+    remember_json_response(candidates, response)
+    assert response.json_calls == 0
+
+    deck = extract_latest_slide_deck(candidates)
+    assert response.json_calls == 1
+    assert deck["name"] == "Desafio Trauma - 27/05/2026"
 
 
 def test_slide_deck_builds_academic_question_from_correct_markers() -> None:
