@@ -32,6 +32,10 @@ class Classification(BaseModel):
     status: Literal["classified", "pending_budget", "needs_review", "failed"] = "classified"
 
 
+class ClassificationBatch(BaseModel):
+    items: list[Classification] = Field(min_length=1, max_length=100)
+
+
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 CPF_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}\b")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?9?\d{4}[-\s]?\d{4}(?!\d)")
@@ -170,15 +174,48 @@ class AIClassifier:
     def budget_warning(self) -> bool:
         return self.spent_usd >= self.budget_usd * self.warning_ratio
 
+    @staticmethod
+    def _pending_budget() -> Classification:
+        return Classification(
+            analysis_role="academic", primary_topic="Outros", subtopic="Pendente de orçamento",
+            cognitive_task="outro", bloom="compreender", predicted_difficulty="medium", confidence=0,
+            rationale="Orçamento mensal insuficiente", needs_review=True, status="pending_budget",
+        )
+
+    @staticmethod
+    def _failed() -> Classification:
+        return Classification(
+            analysis_role="academic",
+            primary_topic="Outros",
+            subtopic="Classificação automática indisponível",
+            cognitive_task="outro",
+            bloom="compreender",
+            predicted_difficulty="medium",
+            confidence=0,
+            rationale="Classificação automática indisponível; requer revisão humana",
+            needs_review=True,
+            status="failed",
+        )
+
+    def _record_response_usage(self, response: Any, status: str) -> None:
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        input_details = getattr(usage, "input_tokens_details", None)
+        cached_input_tokens = min(input_tokens, int(getattr(input_details, "cached_tokens", 0) or 0))
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        self.input_tokens += input_tokens
+        self.cached_input_tokens += cached_input_tokens
+        self.output_tokens += output_tokens
+        cost = ((input_tokens - cached_input_tokens) * self.input_rate + cached_input_tokens * self.cached_input_rate + output_tokens * self.output_rate) / 1_000_000
+        self.spent_usd += cost
+        self.run_spend_usd += cost
+        self._log(UsageRecord(input_tokens, cached_input_tokens, output_tokens, cost, status))
+
     def classify(self, question: str, choices: list[str] | tuple[str, ...]) -> Classification:
         reserve = self.max_output_tokens * self.output_rate / 1_000_000
         if self.spent_usd + reserve > self.budget_usd:
             self._log(UsageRecord(0, 0, 0, 0.0, "pending_budget"))
-            return Classification(
-                analysis_role="academic", primary_topic="Outros", subtopic="Pendente de orçamento", cognitive_task="outro",
-                bloom="compreender", predicted_difficulty="medium", confidence=0,
-                rationale="Orçamento mensal insuficiente", needs_review=True, status="pending_budget",
-            )
+            return self._pending_budget()
         safe = json.dumps({
             "question": minimize_for_ai(redact_pii(question)),
             "choices": [minimize_for_ai(redact_pii(str(choice))) for choice in choices],
@@ -201,34 +238,59 @@ class AIClassifier:
                 raise RuntimeError("Structured classification was not returned")
         except Exception:
             self._log(UsageRecord(0, 0, 0, 0.0, "failed"))
-            return Classification(
-                analysis_role="academic",
-                primary_topic="Outros",
-                subtopic="Classificação automática indisponível",
-                cognitive_task="outro",
-                bloom="compreender",
-                predicted_difficulty="medium",
-                confidence=0,
-                rationale="Classificação automática indisponível; requer revisão humana",
-                needs_review=True,
-                status="failed",
-            )
+            return self._failed()
         if result.confidence < 0.80:
             result.needs_review = True
             result.status = "needs_review"
-        usage = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-        input_details = getattr(usage, "input_tokens_details", None)
-        cached_input_tokens = min(input_tokens, int(getattr(input_details, "cached_tokens", 0) or 0))
-        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-        self.input_tokens += input_tokens
-        self.cached_input_tokens += cached_input_tokens
-        self.output_tokens += output_tokens
-        cost = ((input_tokens - cached_input_tokens) * self.input_rate + cached_input_tokens * self.cached_input_rate + output_tokens * self.output_rate) / 1_000_000
-        self.spent_usd += cost
-        self.run_spend_usd += cost
-        self._log(UsageRecord(input_tokens, cached_input_tokens, output_tokens, cost, result.status))
+        self._record_response_usage(response, result.status)
         return result
+
+    def classify_batch(
+        self,
+        requests: list[tuple[str, list[str] | tuple[str, ...]]],
+    ) -> list[Classification]:
+        if not requests:
+            return []
+        output_limit = self.max_output_tokens * len(requests)
+        reserve = output_limit * self.output_rate / 1_000_000
+        if self.spent_usd + reserve > self.budget_usd:
+            for _ in requests:
+                self._log(UsageRecord(0, 0, 0, 0.0, "pending_budget"))
+            return [self._pending_budget() for _ in requests]
+        safe_items = [{
+            "index": index,
+            "question": minimize_for_ai(redact_pii(question)),
+            "choices": [minimize_for_ai(redact_pii(str(choice))) for choice in choices],
+        } for index, (question, choices) in enumerate(requests)]
+        prompt = (
+            "Classifique cada questão médica, preservando a ordem e usando exclusivamente a taxonomia permitida. "
+            "Retorne exatamente um item por entrada. Não tente reconstruir dados pessoais redigidos. Entrada: "
+            + json.dumps(safe_items, ensure_ascii=False)
+        )
+        try:
+            response = self.client.responses.parse(
+                model=self.model,
+                reasoning={"effort": "low"},
+                store=False,
+                input=prompt,
+                text_format=ClassificationBatch,
+                max_output_tokens=output_limit,
+            )
+            parsed = response.output_parsed
+            if parsed is None or len(parsed.items) != len(requests):
+                raise RuntimeError("Structured batch classification count mismatch")
+            results = parsed.items
+        except Exception:
+            for _ in requests:
+                self._log(UsageRecord(0, 0, 0, 0.0, "failed"))
+            return [self._failed() for _ in requests]
+        for result in results:
+            if result.confidence < 0.80:
+                result.needs_review = True
+                result.status = "needs_review"
+        status = "needs_review" if any(result.needs_review for result in results) else "classified"
+        self._record_response_usage(response, status)
+        return results
 
     @property
     def usage_summary(self) -> dict[str, float | int | bool]:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from pipeline.ai import AIClassifier, Classification, redact_pii
+from pipeline.ai import AIClassifier, Classification, ClassificationBatch, redact_pii
 from pipeline.mentimeter import (
     PresentationRef,
     extract_latest_slide_deck,
@@ -482,6 +482,81 @@ def test_ai_timeout_marks_question_for_review_without_blocking_pipeline() -> Non
     assert result.needs_review is True
     assert result.primary_topic == "Outros"
     assert classifier.usage_summary["estimated_cost_usd"] == 0
+
+
+def test_ai_batches_questions_in_one_structured_request() -> None:
+    captured = {}
+
+    class BatchResponses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
+            parsed = ClassificationBatch(items=[
+                Classification(
+                    primary_topic="Tórax", subtopic="Pneumotórax", cognitive_task="conduta",
+                    bloom="aplicar", predicted_difficulty="medium", confidence=.95,
+                    rationale="Conduta torácica",
+                ),
+                Classification(
+                    primary_topic="Abdome e pelve", subtopic="Baço", cognitive_task="diagnóstico",
+                    bloom="analisar", predicted_difficulty="hard", confidence=.91,
+                    rationale="Diagnóstico abdominal",
+                ),
+            ])
+            usage = type("Usage", (), {"input_tokens": 200, "output_tokens": 80})()
+            return type("Response", (), {"output_parsed": parsed, "usage": usage})()
+
+    classifier = AIClassifier(
+        client=type("Client", (), {"responses": BatchResponses()})(),
+        budget_usd=5,
+        max_output_tokens=500,
+    )
+    results = classifier.classify_batch([
+        ("Questão torácica", ("A", "B")),
+        ("Questão abdominal", ("A", "B")),
+    ])
+
+    assert [result.primary_topic for result in results] == ["Tórax", "Abdome e pelve"]
+    assert captured["max_output_tokens"] == 1000
+    assert captured["text_format"] is ClassificationBatch
+    assert classifier.usage_summary["input_tokens"] == 200
+
+
+def test_pipeline_uses_batch_classifier_for_pending_academic_questions(tmp_path: Path) -> None:
+    class BatchClassifier:
+        def __init__(self):
+            self.calls = []
+
+        def classify(self, *_args):
+            raise AssertionError("sequential classification must not be used")
+
+        def classify_batch(self, requests):
+            self.calls.append(requests)
+            return [
+                Classification(
+                    primary_topic="Tórax", subtopic="Pleura", cognitive_task="conduta",
+                    bloom="aplicar", predicted_difficulty="medium", confidence=.9,
+                    rationale="Teste",
+                )
+                for _ in requests
+            ]
+
+    classifier = BatchClassifier()
+    pipeline = Pipeline(
+        client=object(),
+        repository=LocalRepository(tmp_path / "repository"),
+        classifier=classifier,
+        workdir=tmp_path / "work",
+    )
+    questions = [
+        Question("q1", "p1", 1, "Questão 1", QuestionKind.ACADEMIC, ("A", "B")),
+        Question("q2", "p1", 2, "Questão 2", QuestionKind.ACADEMIC, ("A", "B")),
+    ]
+
+    classified = pipeline._classify_many(questions, False, {})
+
+    assert len(classifier.calls) == 1
+    assert len(classifier.calls[0]) == 2
+    assert [question.topic for question in classified] == ["Tórax", "Tórax"]
 
 
 def _sample_data():

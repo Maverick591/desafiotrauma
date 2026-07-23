@@ -129,7 +129,7 @@ class Pipeline:
                     candidates = deck_by_title.get(" ".join(question.title.split()).casefold(), [])
                     deck_question = candidates[0] if len(candidates) == 1 else None
                 enriched.append(replace(question, kind=deck_question.kind, choices=deck_question.choices, correct_indices=deck_question.correct_indices) if deck_question else question)
-            enriched = [self._classify(q, force_reclassify, existing_questions.get(q.question_id)) for q in enriched]
+            enriched = self._classify_many(enriched, force_reclassify, existing_questions)
             parsed_responses = responses_with_answer_keys(enriched, parsed_responses)
             interactive_slides = len({q.slide_index for q in enriched})
             event_date = getattr(item, "event_date", None) or ref.session_date
@@ -183,7 +183,46 @@ class Pipeline:
         if not self.classifier:
             return question
         result = self.classifier.classify(question.title, question.choices)
+        return self._classified_question(question, result)
+
+    @staticmethod
+    def _classified_question(question: Question, result) -> Question:
         return replace(question, topic=result.primary_topic, analysis_role=result.analysis_role, subtopic=result.subtopic, cognitive_task=result.cognitive_task, bloom=result.bloom, predicted_difficulty=result.predicted_difficulty, ai_confidence=result.confidence, ai_rationale=result.rationale, ai_status=result.status, taxonomy_version="desafio-trauma-v1", needs_review=result.needs_review)
+
+    def _classify_many(
+        self,
+        questions: list[Question],
+        force: bool,
+        existing_questions: dict[str, Question],
+    ) -> list[Question]:
+        classified: list[Question | None] = [None] * len(questions)
+        pending: list[tuple[int, Question]] = []
+        for index, question in enumerate(questions):
+            existing = existing_questions.get(question.question_id)
+            reusable = existing and (
+                not self.classifier or (
+                    existing.ai_confidence is not None
+                    and existing.ai_status not in {"pending_budget", "failed", "unclassified"}
+                    and not force
+                )
+            )
+            if question.kind == QuestionKind.ACADEMIC and self.classifier and not reusable:
+                pending.append((index, question))
+            else:
+                classified[index] = self._classify(question, force, existing)
+        if pending:
+            requests = [(question.title, question.choices) for _, question in pending]
+            if hasattr(self.classifier, "classify_batch"):
+                results = self.classifier.classify_batch(requests)
+            else:
+                results = [self.classifier.classify(title, choices) for title, choices in requests]
+            if len(results) != len(pending):
+                raise RuntimeError("AI classifier returned an unexpected number of results")
+            for (index, question), result in zip(pending, results, strict=True):
+                classified[index] = self._classified_question(question, result)
+        if any(question is None for question in classified):
+            raise RuntimeError("Question classification left an unresolved item")
+        return [question for question in classified if question is not None]
 
 
 def _percent(numerator: float, denominator: float) -> float | None:
