@@ -80,7 +80,7 @@ class MentimeterClient:
     def _login(self, page) -> None:
         page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
         page.get_by_label(re.compile("email", re.I)).fill(self.email)
-        page.get_by_label(re.compile("password|senha", re.I)).fill(self.password)
+        page.get_by_test_id("password-input").fill(self.password)
         page.get_by_role("button", name=re.compile("log in|sign in|entrar", re.I)).click()
         page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
 

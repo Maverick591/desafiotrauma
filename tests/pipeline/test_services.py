@@ -41,6 +41,54 @@ def test_mentimeter_credentials_support_local_fallback(monkeypatch) -> None:
     assert client.email.endswith(".invalid")
 
 
+def test_mentimeter_login_uses_password_input_test_id() -> None:
+    from pipeline.mentimeter import MentimeterClient
+
+    class FakeLocator:
+        def __init__(self) -> None:
+            self.value = None
+            self.clicked = False
+
+        def fill(self, value: str) -> None:
+            self.value = value
+
+        def click(self) -> None:
+            self.clicked = True
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.email = FakeLocator()
+            self.password = FakeLocator()
+            self.submit = FakeLocator()
+            self.test_ids: list[str] = []
+
+        def goto(self, *_args, **_kwargs) -> None:
+            return None
+
+        def get_by_label(self, pattern):
+            if pattern.search("Show password"):
+                raise AssertionError("password label selector also matches the visibility button")
+            return self.email
+
+        def get_by_test_id(self, test_id: str):
+            self.test_ids.append(test_id)
+            return self.password
+
+        def get_by_role(self, *_args, **_kwargs):
+            return self.submit
+
+        def wait_for_url(self, *_args, **_kwargs) -> None:
+            return None
+
+    page = FakePage()
+    MentimeterClient(email="admin@example.invalid", password="secret")._login(page)
+
+    assert page.test_ids == ["password-input"]
+    assert page.email.value == "admin@example.invalid"
+    assert page.password.value == "secret"
+    assert page.submit.clicked is True
+
+
 def test_capture_accepts_only_json_with_slide_deck() -> None:
     assert extract_slide_deck({"anything": 1}) is None
     deck = {"slide_deck": {"name": "Desafio Trauma - 27/05/2026", "slides": []}}
