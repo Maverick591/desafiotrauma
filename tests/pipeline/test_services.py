@@ -271,10 +271,15 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     class FakeDownloadContext:
         value = FakeDownload()
 
+        def __init__(self, fail: bool = False) -> None:
+            self.fail = fail
+
         def __enter__(self):
             return self
 
         def __exit__(self, *_args) -> None:
+            if self.fail:
+                raise TimeoutError("simulated delayed XLSX generation")
             return None
 
     class FakePage:
@@ -285,6 +290,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.consent = FakeLocator()
             self.roles = []
             self.reload_calls = []
+            self.expect_calls = 0
 
         def goto(self, *args, **kwargs) -> None:
             self.goto_call = (args, kwargs)
@@ -305,7 +311,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
 
         def expect_event(self, event: str, **_kwargs):
             assert event == "download"
-            return FakeDownloadContext()
+            self.expect_calls += 1
+            return FakeDownloadContext(fail=self.expect_calls == 1)
 
     page = FakePage()
     ref = PresentationRef("p1", "Desafio Trauma - 27/05/2026", "/app/presentation/p1/results?source=dashboard")
@@ -318,7 +325,10 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
-    assert page.reload_calls == [{"wait_until": "domcontentloaded", "timeout": 45_000}]
+    assert page.reload_calls == [
+        {"wait_until": "domcontentloaded", "timeout": 45_000},
+        {"wait_until": "domcontentloaded", "timeout": 45_000},
+    ]
     assert page.consent.removed is True
     assert page.download_button.waited is True
     assert page.download_button.click_options == {}

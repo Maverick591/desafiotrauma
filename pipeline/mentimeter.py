@@ -234,16 +234,27 @@ class MentimeterClient:
             # their first render. One clean reload reliably mounts the toolbar.
             page.reload(wait_until="domcontentloaded", timeout=45_000)
             download_button.wait_for(state="visible", timeout=45_000)
-        # The consent component is injected asynchronously on application routes.
-        # Remove it only after the results controls have mounted.
-        self._remove_consent_overlay(page)
-        download_button.click()
-        xlsx_menuitem = page.locator("#excel-download-button")
-        xlsx_menuitem.wait_for(state="visible", timeout=15_000)
-        with page.expect_event("download", timeout=45_000) as download_info:
-            xlsx_menuitem.click()
+        def trigger_xlsx_download():
+            # The consent component is injected asynchronously on application
+            # routes. Remove it only after the results controls have mounted.
+            self._remove_consent_overlay(page)
+            download_button.click()
+            xlsx_menuitem = page.locator("#excel-download-button")
+            xlsx_menuitem.wait_for(state="visible", timeout=15_000)
+            with page.expect_event("download", timeout=45_000) as download_info:
+                xlsx_menuitem.click()
+            return download_info.value
+
+        try:
+            download = trigger_xlsx_download()
+        except Exception:
+            # Mentimeter occasionally delays XLSX generation even after the
+            # menu is visible. Reload once to obtain a fresh export request.
+            page.reload(wait_until="domcontentloaded", timeout=45_000)
+            download_button.wait_for(state="visible", timeout=45_000)
+            download = trigger_xlsx_download()
         xlsx_path = destination / f"{ref.presentation_id}.xlsx"
-        download_info.value.save_as(xlsx_path)
+        download.save_as(xlsx_path)
         return xlsx_path
 
     def fetch(self, ref: PresentationRef, destination: Path) -> tuple[Path, dict[str, Any]]:
