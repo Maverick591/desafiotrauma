@@ -14,5 +14,6 @@ coverage/
 test-results/
 playwright-report/
 pipeline-artifacts/
+.pipeline-data/
 .npm-cache/
 .superpowers/

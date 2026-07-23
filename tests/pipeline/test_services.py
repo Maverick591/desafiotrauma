@@ -48,6 +48,50 @@ def test_mentimeter_credentials_support_local_fallback(monkeypatch) -> None:
     assert client.email.endswith(".invalid")
 
 
+def test_mentimeter_reuses_ephemeral_authenticated_storage_state(tmp_path: Path, monkeypatch) -> None:
+    from pipeline.mentimeter import MentimeterClient
+
+    monkeypatch.setenv("PIPELINE_WORKDIR", str(tmp_path))
+
+    class FakePage:
+        pass
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.page = FakePage()
+
+        def new_page(self):
+            return self.page
+
+        def storage_state(self, *, path: str) -> None:
+            Path(path).write_text("{}", encoding="utf-8")
+
+    class FakeBrowser:
+        def __init__(self) -> None:
+            self.options = []
+
+        def new_context(self, **options):
+            self.options.append(options)
+            return FakeContext()
+
+    client = MentimeterClient(email="admin@example.invalid", password="secret")
+    logins = []
+    client._login = lambda page: logins.append(page)
+    browser = FakeBrowser()
+
+    client._authenticated_page(browser)
+    client._authenticated_page(browser)
+
+    assert len(logins) == 1
+    assert browser.options == [
+        {"accept_downloads": True},
+        {
+            "accept_downloads": True,
+            "storage_state": str(tmp_path / "mentimeter-storage-state.json"),
+        },
+    ]
+
+
 def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     from pipeline.mentimeter import MentimeterClient
 

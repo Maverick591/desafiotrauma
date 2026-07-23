@@ -102,8 +102,25 @@ class MentimeterClient:
         self.email = email or os.getenv("MENTIMETER_EMAIL") or os.getenv("LOGIN_EMAIL")
         self.password = password or os.getenv("MENTIMETER_PASSWORD") or os.getenv("LOGIN_PASSWORD")
         self.headless = headless
+        self.storage_state_path = Path(
+            os.getenv("PIPELINE_WORKDIR", ".pipeline-data")
+        ) / "mentimeter-storage-state.json"
         if not self.email or not self.password:
             raise RuntimeError("MENTIMETER_EMAIL and MENTIMETER_PASSWORD are required")
+
+    def _authenticated_page(self, browser):
+        has_state = self.storage_state_path.is_file()
+        options: dict[str, Any] = {"accept_downloads": True}
+        if has_state:
+            options["storage_state"] = str(self.storage_state_path)
+        context = browser.new_context(**options)
+        page = context.new_page()
+        if not has_state:
+            self._login(page)
+            self.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=str(self.storage_state_path))
+            self.storage_state_path.chmod(0o600)
+        return context, page
 
     @staticmethod
     def _remove_consent_overlay(page) -> None:
@@ -199,10 +216,10 @@ class MentimeterClient:
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.headless)
-            context = browser.new_context(accept_downloads=True)
-            page = context.new_page()
-            self._login(page)
+            context, page = self._authenticated_page(browser)
             result = self._discover_with_page(page)
+            context.storage_state(path=str(self.storage_state_path))
+            self.storage_state_path.chmod(0o600)
             browser.close()
             return result
 
@@ -231,9 +248,7 @@ class MentimeterClient:
         response_candidates: list[Any] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.headless)
-            context = browser.new_context(accept_downloads=True)
-            page = context.new_page()
-            self._login(page)
+            context, page = self._authenticated_page(browser)
 
             def on_response(response) -> None:
                 remember_json_response(response_candidates, response)
