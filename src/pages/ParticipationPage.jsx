@@ -1,4 +1,4 @@
-import { DonutChart, HorizontalBarChart, MonthlyBarChart, TrendChart } from '../components/charts/Charts.jsx'
+import { DonutChart, HorizontalBarChart, MonthlyBarChart, ProfileStackedBarChart, TrendChart } from '../components/charts/Charts.jsx'
 import { DashboardGate } from '../components/ui/DataState.jsx'
 import { MetricCard } from '../components/ui/MetricCard.jsx'
 import { PageHeader } from '../components/ui/PageHeader.jsx'
@@ -17,20 +17,29 @@ export function ParticipationPage() {
             <MetricCard label="Taxa de resposta" value={numberFrom(data, ['response_rate'])} suffix="%" />
             <MetricCard label="Avaliadores" value={numberFrom(data, ['evaluators'])} />
             <MetricCard label="Adesão à avaliação" value={numberFrom(data, ['evaluation_rate'])} suffix="%" />
+            <MetricCard label="Perfis informados" value={numberFrom(data, ['profile_respondents'])} />
+            <MetricCard label="Cobertura do perfil" value={numberFrom(data, ['profile_coverage'])} suffix="%" />
             <MetricCard label="Apresentações" value={numberFrom(data, ['presentations'])} />
           </section>
           <Panel>
             <SectionHeading title="Participação por mês" description="Soma das participações registradas em cada mês; uma pessoa pode participar de mais de um encontro." />
             <MonthlyBarChart data={listFrom(data, 'monthly')} />
           </Panel>
+          <div className="dashboard-grid dashboard-grid--wide">
+            <Panel className="dashboard-grid__main">
+              <SectionHeading title="Evolução mensal dos perfis" description="Quantidade de respondentes por perfil e mês; recortes mensais com n<5 são suprimidos." />
+              <ProfileStackedBarChart data={listFrom(data, 'profile_monthly')} />
+            </Panel>
+            <Panel>
+              <SectionHeading title="Composição por perfil" description="Percentual entre os participantes que responderam à questão de perfil." />
+              <DonutChart data={listFrom(data, 'by_profile', 'profiles')} />
+            </Panel>
+          </div>
           <Panel>
             <SectionHeading title="Participação ao longo do tempo" description="Participantes e respostas válidas por período." />
             <TrendChart data={listFrom(data, 'trend', 'timeline')} areas={[{ key: 'participants', label: 'Participantes' }, { key: 'responses', label: 'Respostas', color: '#4c6fff' }]} />
           </Panel>
-          <div className="dashboard-grid">
-            <Panel><SectionHeading title="Por perfil" description="Composição percentual declarada." /><DonutChart data={listFrom(data, 'by_profile', 'profiles')} /></Panel>
-            <Panel><SectionHeading title="Por formato" description="Distribuição das interações." /><HorizontalBarChart data={listFrom(data, 'by_format', 'formats')} suffix="%" /></Panel>
-          </div>
+          <Panel><SectionHeading title="Por formato" description="Distribuição das interações." /><HorizontalBarChart data={listFrom(data, 'by_format', 'formats')} suffix="%" /></Panel>
         </div>
       )}</DashboardGate>
     </>

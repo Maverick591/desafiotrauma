@@ -267,7 +267,7 @@ class SupabaseRepository:
         """The RPC is the single final transaction: snapshot publish + run success."""
         usage = usage or {}; checksum = hashlib.sha256(json.dumps(snapshot, sort_keys=True, default=str).encode()).hexdigest()
         self.client.rpc("publish_dashboard_snapshot", {
-            "p_pipeline_run_id": self.run_id, "p_schema_version": "1.1", "p_snapshot": snapshot,
+            "p_pipeline_run_id": self.run_id, "p_schema_version": "1.2", "p_snapshot": snapshot,
             "p_privacy_k": 5, "p_checksum_sha256": checksum, "p_result": result, "p_manual_imports": manual_imports or [],
             "p_input_tokens": usage.get("input_tokens", 0), "p_cached_input_tokens": usage.get("cached_input_tokens", 0), "p_output_tokens": usage.get("output_tokens", 0),
             "p_estimated_cost_usd": usage.get("estimated_cost_usd", 0),

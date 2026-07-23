@@ -33,7 +33,7 @@ export function OverviewPage() {
               <Panel className="insight-panel">
                 <SectionHeading title="Sinais clínicos" description="Leituras em destaque nesta seleção." />
                 <div className="insight-list">
-                  {highlights.length ? highlights.map((item, index) => (
+                  {highlights.length ? highlights.slice(0, 6).map((item, index) => (
                     <article key={item.title || index}><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{item.title}</h3><p>{item.detail || item.description}</p></div></article>
                   )) : <p className="muted">Nenhum destaque publicado.</p>}
                 </div>

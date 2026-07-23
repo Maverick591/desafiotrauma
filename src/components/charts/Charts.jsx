@@ -34,7 +34,7 @@ function AccessibleChartTable({ caption, data, columns }) {
         <caption>{caption}</caption>
         <thead><tr>{columns.map((column) => <th scope="col" key={column.key}>{column.label}</th>)}</tr></thead>
         <tbody>{data.map((row, index) => (
-          <tr key={row.label ?? index}>{columns.map((column) => <td key={column.key}>{row[column.key] ?? 'Dado não disponível'}</td>)}</tr>
+          <tr key={row.key ?? `${row.label ?? 'row'}-${index}`}>{columns.map((column) => <td key={column.key}>{row[column.key] ?? 'Dado não disponível'}</td>)}</tr>
         ))}</tbody>
       </table>
     </div>
@@ -118,7 +118,11 @@ export function DonutChart({ data }) {
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <AccessibleChartTable caption="Dados da composição percentual" data={data} columns={[{ key: 'label', label: 'Categoria' }, { key: 'value', label: 'Percentual' }]} />
+      <AccessibleChartTable caption="Dados da composição percentual" data={data} columns={[
+        { key: 'label', label: 'Categoria' },
+        ...(data.some((item) => item.count != null) ? [{ key: 'count', label: 'Respondentes' }] : []),
+        { key: 'value', label: 'Percentual' },
+      ]} />
     </>
   )
 }
@@ -147,6 +151,54 @@ export function MonthlyBarChart({ data }) {
         { key: 'participants', label: 'Participações' },
         { key: 'responses', label: 'Respostas' },
         { key: 'presentations', label: 'Apresentações' },
+      ]} />
+    </>
+  )
+}
+
+export function ProfileStackedBarChart({ data }) {
+  if (!data?.length) return <p className="chart-empty">Sem evolução de perfil para esta seleção.</p>
+  const profiles = [...new Set(data.map((item) => item.profile))]
+    .sort((left, right) => {
+      const leftTotal = data.filter((item) => item.profile === left).reduce((sum, item) => sum + item.count, 0)
+      const rightTotal = data.filter((item) => item.profile === right).reduce((sum, item) => sum + item.count, 0)
+      return rightTotal - leftTotal || left.localeCompare(right)
+    })
+  const monthRows = new Map()
+  data.forEach((item) => {
+    const row = monthRows.get(item.month) || { month: item.month, label: item.label }
+    row[item.profile] = item.count
+    monthRows.set(item.month, row)
+  })
+  const chartData = [...monthRows.values()].sort((left, right) => left.month.localeCompare(right.month))
+  return (
+    <>
+      <div className="chart chart--tall" aria-hidden="true">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 10, right: 8, left: -12, bottom: 0 }}>
+            <CartesianGrid stroke="#e8edf3" strokeDasharray="4 4" vertical={false} />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#657187', fontSize: 11 }} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#657187', fontSize: 11 }} allowDecimals={false} />
+            <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formattedValue(value), name]} />
+            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+            {profiles.map((profile, index) => (
+              <Bar
+                key={profile}
+                dataKey={profile}
+                name={profile}
+                stackId="profiles"
+                fill={chartColors[index % chartColors.length]}
+                radius={index === profiles.length - 1 ? [6, 6, 0, 0] : 0}
+                maxBarSize={48}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <AccessibleChartTable caption="Evolução mensal dos perfis informados" data={data} columns={[
+        { key: 'label', label: 'Mês' },
+        { key: 'profile', label: 'Perfil' },
+        { key: 'count', label: 'Respondentes' },
       ]} />
     </>
   )

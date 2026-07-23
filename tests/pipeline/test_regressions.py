@@ -79,7 +79,7 @@ def test_public_totals_and_profile_denominator_cannot_reveal_suppressed_groups(t
     snapshot = build_public_snapshot([presentation], sessions, [academic, profile], responses)
     assert snapshot["overview"]["participants"] == 5
     assert snapshot["overview"]["responses"] == 10
-    assert snapshot["participation"]["by_profile"] == [{"label": "Cirurgião", "value": 100.0}]
+    assert snapshot["participation"]["by_profile"] == [{"label": "Cirurgião", "count": 5, "value": 100.0}]
     assert all(row["label"] != "01/01/2026" for row in snapshot["participation"]["trend"])
 
     report = write_report(tmp_path / "public.xlsx", [presentation], sessions, [academic, profile], responses, public=True)
@@ -107,6 +107,46 @@ def test_profile_views_are_disabled_when_any_complement_is_below_k() -> None:
     assert snapshot["participation"]["by_profile"] == []
     assert snapshot["filters"]["profiles"] == ["Todos os perfis"]
     assert not any(view["filters"].get("profile") for view in snapshot["filters"]["views"])
+
+
+def test_profile_distribution_uses_profile_respondents_and_reports_coverage() -> None:
+    presentation = Presentation("p", "Desafio Trauma - 01/01/2026", date(2026, 1, 1), "/p")
+    session = Session("s", "p", date(2026, 1, 1), 10, 2, True)
+    academic = Question("qa", "p", 1, "Q", QuestionKind.ACADEMIC)
+    profile = Question("qp", "p", 2, "Participante", QuestionKind.PROFILE)
+    responses = [
+        Response(f"a-{index}", "s", "qa", f"u-{index}", "A", True)
+        for index in range(10)
+    ] + [
+        Response(
+            f"p-{index}",
+            "s",
+            "qp",
+            f"u-{index}",
+            "Preceptor" if index < 3 else "Preceptor / Fellow",
+            None,
+        )
+        for index in range(5)
+    ]
+    snapshot = build_public_snapshot([presentation], [session], [academic, profile], responses)
+    assert snapshot["participation"]["profile_respondents"] == 5
+    assert snapshot["participation"]["profile_coverage"] == 50.0
+    assert snapshot["participation"]["by_profile"] == [{
+        "label": "Preceptor / Fellow",
+        "count": 5,
+        "value": 100.0,
+    }]
+    assert snapshot["participation"]["profile_monthly"] == [{
+        "month": "2026-01",
+        "label": "jan/26",
+        "profile": "Preceptor / Fellow",
+        "count": 5,
+    }]
+    assert "Preceptor / Fellow" in snapshot["filters"]["profiles"]
+    assert any(
+        view["filters"] == {"profile": "Preceptor / Fellow"}
+        for view in snapshot["filters"]["views"]
+    )
 
 
 def test_question_below_k_is_excluded_from_public_details_and_totals(tmp_path: Path) -> None:

@@ -257,6 +257,27 @@ def _criterion_key(value: str) -> str:
     return normalized[:42] or "criterio"
 
 
+def _normalized_profile_value(value: object) -> str:
+    label = " ".join(str(value).split())
+    normalized = _normalized_label(label)
+    if normalized.startswith("residente"):
+        return "Residente"
+    if normalized.startswith("aluno") or normalized.startswith("estudante"):
+        return "Aluno"
+    if normalized.startswith("preceptor") or normalized.startswith("fellow"):
+        return "Preceptor / Fellow"
+    if "assistente" in normalized or "convidado" in normalized:
+        return "Assistente / Convidado"
+    if normalized in {"nao medico", "nao-medico"}:
+        return "Não médico"
+    return label
+
+
+def _short_text(value: str, limit: int = 104) -> str:
+    compact = " ".join(value.split())
+    return compact if len(compact) <= limit else f"{compact[:limit - 1].rstrip()}…"
+
+
 def published_corpus(presentations, sessions, questions, responses):
     """Exclude open/partial sessions from every public and exported artifact."""
     published_sessions = [session for session in sessions if session.complete]
@@ -428,22 +449,51 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
 
     profile_questions = {question.question_id for question in questions if question.kind == QuestionKind.PROFILE}
     profile_people: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    profile_rows = []
     for response in responses:
-        if response.question_id in profile_questions:
-            profile_people[str(response.value)].add((response.session_id, response.participant_id))
+        if response.question_id in profile_questions and str(response.value).strip():
+            profile = _normalized_profile_value(response.value)
+            respondent = (response.session_id, response.participant_id)
+            profile_people[profile].add(respondent)
+            profile_rows.append((response, profile, respondent))
     profile_counts = Counter({label: len(people) for label, people in profile_people.items()})
     profile_responders = set().union(*profile_people.values()) if profile_people else set()
     profile_filters_safe = (
         bool(profile_counts)
         and all(value >= privacy_k for value in profile_counts.values())
-        and len(profile_responders) == participants_total
-        and sum(profile_counts.values()) == participants_total
     )
     visible_profile_counts = dict(profile_counts) if profile_filters_safe else {}
     profile_total = sum(visible_profile_counts.values())
     by_profile = (
-        [{"label": key, "value": round(100 * value / profile_total, 1)} for key, value in visible_profile_counts.items()]
+        [{
+            "label": key,
+            "count": value,
+            "value": round(100 * value / profile_total, 1),
+        } for key, value in sorted(visible_profile_counts.items(), key=lambda item: (-item[1], item[0]))]
         if profile_total else []
+    )
+    profile_month_groups: dict[str, dict[str, set[tuple[str, str]]]] = defaultdict(lambda: defaultdict(set))
+    for response, profile, respondent in profile_rows:
+        session = session_by_id.get(response.session_id)
+        if session:
+            profile_month_groups[_month_key(session.session_date)][profile].add(respondent)
+    profile_monthly = []
+    for month, profile_sets in sorted(profile_month_groups.items()):
+        month_counts = {profile: len(people) for profile, people in profile_sets.items()}
+        visible_counts = {profile: count for profile, count in month_counts.items() if count >= privacy_k}
+        suppressed_total = sum(count for count in month_counts.values() if count < privacy_k)
+        if suppressed_total >= privacy_k:
+            visible_counts["Outros perfis"] = suppressed_total
+        for profile, count in sorted(visible_counts.items(), key=lambda item: (-item[1], item[0])):
+            profile_monthly.append({
+                "month": month,
+                "label": _month_label(month),
+                "profile": profile,
+                "count": count,
+            })
+    profile_coverage = (
+        _percent(len(profile_responders), participants_total)
+        if profile_filters_safe and overall_visible else None
     )
     format_counts = Counter(question.kind.value for question in questions)
     format_total = sum(format_counts.values())
@@ -623,15 +673,30 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
             "title": "Participação que se transforma em evidência",
             "detail": f"{participants_total} participações em {len(presentations)} encontros do Desafio Trauma.",
         })
+    if response_rate is not None:
+        highlights.append({
+            "title": "Engajamento nas interações",
+            "detail": f"{response_rate:.1f}% das respostas possíveis foram registradas nas sessões elegíveis.",
+        })
     if accuracy_rate is not None:
         highlights.append({
             "title": "Aprendizado monitorado continuamente",
             "detail": f"Acurácia histórica de {accuracy_rate:.1f}% em {len(academic)} respostas acadêmicas.",
         })
+    if question_performance:
+        highlights.append({
+            "title": "Base histórica para melhoria",
+            "detail": f"{len(question_performance)} questões acadêmicas possuem amostra pública suficiente para análise.",
+        })
     if score is not None:
         highlights.append({
             "title": "Experiência reconhecida pelos participantes",
             "detail": f"Avaliação consolidada de {score:.2f}/5, com {evaluation_count or 0} avaliadores.",
+        })
+    if evaluation_rate is not None:
+        highlights.append({
+            "title": "Escuta dos participantes",
+            "detail": f"{evaluation_rate:.1f}% das participações resultaram em avaliação da experiência.",
         })
     if monthly_participation:
         busiest = max(monthly_participation, key=lambda item: item["participants"])
@@ -639,6 +704,22 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
             "title": "Alcance mensal em perspectiva",
             "detail": f"{busiest['label']} concentrou {busiest['participants']} participações, o maior volume da série.",
         })
+    if profile_filters_safe and profile_total:
+        highlights.append({
+            "title": "Perfil dos participantes consolidado",
+            "detail": f"{profile_total} participantes informaram o perfil, cobrindo {profile_coverage:.1f}% das participações publicadas.",
+        })
+        leading_profile = by_profile[0]
+        highlights.append({
+            "title": "Principal público participante",
+            "detail": f"{leading_profile['label']} representa {leading_profile['value']:.1f}% dos respondentes de perfil ({leading_profile['count']}).",
+        })
+        trainee_count = sum(visible_profile_counts.get(label, 0) for label in ("Aluno", "Residente"))
+        if trainee_count >= privacy_k:
+            highlights.append({
+                "title": "Formação em trauma no centro da iniciativa",
+                "detail": f"Alunos e residentes somam {trainee_count} respondentes, {100 * trainee_count / profile_total:.1f}% dos perfis informados.",
+            })
     reinforce_topics = sorted(
         [item for item in topic_items if item["opportunity"] == "Reforçar"],
         key=lambda item: item["accuracy"],
@@ -647,6 +728,30 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
         highlights.append({
             "title": "Dados que orientam o próximo encontro",
             "detail": f"{reinforce_topics[0]['topic']} aparece como prioridade histórica de reforço ({reinforce_topics[0]['accuracy']:.1f}% de acurácia).",
+        })
+    scored_topics = [item for item in topic_items if item["accuracy"] is not None]
+    if scored_topics:
+        strongest_topic = max(scored_topics, key=lambda item: (item["accuracy"], item["responses"]))
+        highlights.append({
+            "title": "Assunto com maior domínio acumulado",
+            "detail": f"{strongest_topic['topic']} registra {strongest_topic['accuracy']:.1f}% de acurácia histórica.",
+        })
+        recurring_topic = max(scored_topics, key=lambda item: (item["recurrence"], item["questions"]))
+        highlights.append({
+            "title": "Assunto mais recorrente",
+            "detail": f"{recurring_topic['topic']} esteve presente em {recurring_topic['recurrence']} encontros, com {recurring_topic['questions']} questões.",
+        })
+    if strongest_questions:
+        strongest = strongest_questions[0]
+        highlights.append({
+            "title": "Questão de maior domínio",
+            "detail": f"“{_short_text(strongest['question'])}” alcançou {strongest['accuracy']:.1f}% em {strongest['responses']} respostas.",
+        })
+    if priority_questions:
+        priority = priority_questions[0]
+        highlights.append({
+            "title": "Questão prioritária para revisão",
+            "detail": f"“{_short_text(priority['question'])}” teve {priority['accuracy']:.1f}% de acerto em {priority['responses']} respostas.",
         })
 
     snapshot = {
@@ -678,6 +783,9 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
             "presentations": len(presentations),
             "trend": participation_trend,
             "monthly": monthly_participation,
+            "profile_respondents": profile_total if profile_filters_safe else None,
+            "profile_coverage": profile_coverage,
+            "profile_monthly": profile_monthly if profile_filters_safe else [],
             "by_profile": by_profile,
             "by_format": by_format,
         },
@@ -713,6 +821,7 @@ def build_public_snapshot(presentations, sessions, questions, responses, privacy
         },
         "metric_dictionary": [
             {"metric": "Taxa de resposta", "definition": "Respostas válidas divididas por participantes vezes slides interativos."},
+            {"metric": "Cobertura de perfil", "definition": "Respondentes da questão de perfil divididos pelas participações publicadas; uma pessoa pode aparecer em mais de um encontro."},
             {"metric": "Acurácia", "definition": "Percentual de respostas acadêmicas corretas; exclui perfil e avaliação."},
             {"metric": "Média móvel", "definition": "Acurácia média das oito sessões acadêmicas elegíveis mais recentes."},
             {"metric": "NPS", "definition": "Percentual de promotores menos percentual de detratores."},
@@ -768,8 +877,15 @@ def _filter_corpus(filter_name, value, presentations, sessions, questions, respo
         selected_responses = [item for item in responses if item.session_id in selected_session_ids]
     elif filter_name == "profile":
         profile_ids = {item.question_id for item in questions if item.kind == QuestionKind.PROFILE}
-        participant_ids = {item.participant_id for item in responses if item.question_id in profile_ids and str(item.value) == str(value)}
-        selected_responses = [item for item in responses if item.participant_id in participant_ids]
+        participant_ids = {
+            (item.session_id, item.participant_id)
+            for item in responses
+            if item.question_id in profile_ids and _normalized_profile_value(item.value) == str(value)
+        }
+        selected_responses = [
+            item for item in responses
+            if (item.session_id, item.participant_id) in participant_ids
+        ]
     elif filter_name == "format":
         question_ids = {item.question_id for item in questions if item.kind.value == value}
         selected_responses = [item for item in responses if item.question_id in question_ids]
@@ -807,14 +923,14 @@ def _filter_corpus(filter_name, value, presentations, sessions, questions, respo
 def validate_public_snapshot(snapshot: dict[str, Any]) -> None:
     required = {"metadata", "filters", "overview", "participation", "learning", "experience", "topics", "metric_dictionary", "public_files"}
     if set(snapshot) != required: raise ValueError(f"snapshot v1 keys mismatch: {set(snapshot) ^ required}")
-    for section, field in (("overview", "response_rate"), ("overview", "accuracy_rate"), ("participation", "response_rate"), ("participation", "evaluation_rate"), ("learning", "accuracy_rate"), ("experience", "evaluation_rate"), ("experience", "recommendation_rate")):
+    for section, field in (("overview", "response_rate"), ("overview", "accuracy_rate"), ("participation", "response_rate"), ("participation", "evaluation_rate"), ("participation", "profile_coverage"), ("learning", "accuracy_rate"), ("experience", "evaluation_rate"), ("experience", "recommendation_rate")):
         value = snapshot.get(section, {}).get(field)
         if value is not None and (value < 0 or value > 100): raise ValueError(f"percentage unit invalid: {section}.{field}")
     contracts = {
         "metadata": {"generated_at", "source_updated_at", "privacy_note"},
         "filters": {"periods", "presentations", "profiles", "formats", "topics", "difficulties", "views"},
         "overview": {"presentations", "participants", "responses", "response_rate", "accuracy_rate", "experience_score", "trend", "highlights"},
-        "participation": {"total_participants", "total_responses", "response_rate", "evaluators", "evaluation_rate", "presentations", "trend", "monthly", "by_profile", "by_format"},
+        "participation": {"total_participants", "total_responses", "response_rate", "evaluators", "evaluation_rate", "presentations", "trend", "monthly", "profile_respondents", "profile_coverage", "profile_monthly", "by_profile", "by_format"},
         "learning": {"accuracy_rate", "questions", "answers", "improvement", "trend", "by_difficulty", "question_performance", "historical"},
         "experience": {"score", "nps", "evaluations", "evaluation_rate", "recommendation_rate", "criteria", "trend"},
         "topics": {"coverage", "mapped_questions", "opportunities", "items"},
