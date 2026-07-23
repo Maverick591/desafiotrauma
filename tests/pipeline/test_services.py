@@ -68,7 +68,7 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
         def count(self) -> int:
             return 1
 
-        def evaluate(self, _script: str) -> None:
+        def evaluate_all(self, _script: str) -> None:
             self.removed = True
 
     class FakePage:
@@ -92,7 +92,7 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
             return {"password-input": self.password, "login-btn": self.submit}[test_id]
 
         def locator(self, selector: str):
-            assert selector == "#cookiebanner-container"
+            assert selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop"
             return self.consent
 
         def get_by_role(self, _role, name):
@@ -201,12 +201,19 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         def __init__(self) -> None:
             self.waited = False
             self.click_options = None
+            self.removed = False
 
         def wait_for(self, **_kwargs) -> None:
             self.waited = True
 
         def click(self, **options) -> None:
             self.click_options = options
+
+        def count(self) -> int:
+            return 1
+
+        def evaluate_all(self, _script: str) -> None:
+            self.removed = True
 
     class FakeDownload:
         def save_as(self, destination: Path) -> None:
@@ -226,6 +233,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.goto_call = None
             self.download_button = FakeLocator()
             self.xlsx_menuitem = FakeLocator()
+            self.consent = FakeLocator()
             self.roles = []
 
         def goto(self, *args, **kwargs) -> None:
@@ -237,6 +245,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             return self.download_button
 
         def locator(self, selector: str):
+            if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
+                return self.consent
             assert selector == "#excel-download-button"
             return self.xlsx_menuitem
 
@@ -255,6 +265,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
+    assert page.consent.removed is True
     assert page.download_button.waited is True
     assert page.download_button.click_options == {}
     assert page.xlsx_menuitem.waited is True

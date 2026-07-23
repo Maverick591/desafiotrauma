@@ -105,13 +105,17 @@ class MentimeterClient:
         if not self.email or not self.password:
             raise RuntimeError("MENTIMETER_EMAIL and MENTIMETER_PASSWORD are required")
 
-    def _login(self, page) -> None:
-        page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
-        consent = page.locator("#cookiebanner-container")
+    @staticmethod
+    def _remove_consent_overlay(page) -> None:
+        consent = page.locator("#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop")
         if consent.count():
             # Keep the default consent state; only remove the visual overlay that
             # otherwise intercepts automation clicks in fresh CI contexts.
-            consent.evaluate("(element) => element.remove()")
+            consent.evaluate_all("(elements) => elements.forEach((element) => element.remove())")
+
+    def _login(self, page) -> None:
+        page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
+        self._remove_consent_overlay(page)
         page.get_by_label(re.compile("email", re.I)).fill(self.email)
         page.get_by_test_id("password-input").fill(self.password)
         page.get_by_test_id("login-btn").click()
@@ -205,6 +209,7 @@ class MentimeterClient:
     def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
+        self._remove_consent_overlay(page)
         download_button = page.get_by_role("button", name="Download", exact=True)
         download_button.wait_for(state="visible", timeout=45_000)
         download_button.click()
