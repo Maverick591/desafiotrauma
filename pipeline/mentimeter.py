@@ -209,9 +209,11 @@ class MentimeterClient:
     def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
-        self._remove_consent_overlay(page)
         download_button = page.get_by_role("button", name="Download", exact=True)
         download_button.wait_for(state="visible", timeout=45_000)
+        # The consent component is injected asynchronously on application routes.
+        # Remove it only after the results controls have mounted.
+        self._remove_consent_overlay(page)
         download_button.click()
         xlsx_menuitem = page.locator("#excel-download-button")
         xlsx_menuitem.wait_for(state="visible", timeout=15_000)
