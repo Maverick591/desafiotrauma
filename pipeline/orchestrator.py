@@ -4,7 +4,7 @@ import json
 import os
 from collections import Counter, defaultdict
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -46,6 +46,11 @@ def questions_from_deck(deck: dict[str, Any], presentation_id: str) -> list[Ques
             else: kind = QuestionKind.OTHER
             questions.append(Question(stable_id("question", presentation_id, slide_index, title), presentation_id, slide_index, title, kind, choices, correct))
     return questions
+
+
+def session_date_from_responses(responses: list[Response], fallback: date) -> date:
+    dates = [response.submitted_at.date() for response in responses if response.submitted_at is not None]
+    return min(dates) if dates else fallback
 
 
 class Pipeline:
@@ -129,8 +134,9 @@ class Pipeline:
             for session_id in sorted({response.session_id for response in parsed_responses}):
                 session_responses = [response for response in parsed_responses if response.session_id == session_id]
                 participants = len({response.participant_id for response in session_responses})
-                complete = bool(session_responses and enriched and participants and interactive_slides and event_date < now.date())
-                sessions.append(Session(session_id, ref.presentation_id, event_date, participants, interactive_slides, complete))
+                session_date = session_date_from_responses(session_responses, event_date)
+                complete = bool(session_responses and enriched and participants and interactive_slides and session_date < now.date())
+                sessions.append(Session(session_id, ref.presentation_id, session_date, participants, interactive_slides, complete))
             questions.extend(enriched); responses.extend(parsed_responses)
         if mode == "manual" and not presentations:
             raise RuntimeError("No valid manual imports; empty files were rejected")

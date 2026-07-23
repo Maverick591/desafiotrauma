@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from zipfile import BadZipFile
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any
 from xml.etree.ElementTree import ParseError
@@ -96,8 +97,17 @@ def parse_workbook(path: str | Path, presentation_id: str) -> tuple[list[Questio
 def _parse_loaded_workbook(workbook, path: str | Path, presentation_id: str) -> tuple[list[Question], list[Response]]:
     selected = None
     matrix = None
+    voters = None
     for sheet in workbook.worksheets:
         for row_number, row in enumerate(sheet.iter_rows(min_row=1, max_row=15, values_only=True), start=1):
+            normalized = [_key(value) for value in row]
+            if (
+                "date (utc)" in normalized
+                and "session" in normalized
+                and "voter" in normalized
+                and any(re.search(r":\s*answer$", value, re.I) for value in normalized)
+            ):
+                voters = voters or (sheet, row_number, row)
             mapping = _mapping(row)
             if {"participant", "question", "answer"}.issubset(mapping):
                 selected = (sheet, row_number, mapping)
@@ -106,6 +116,8 @@ def _parse_loaded_workbook(workbook, path: str | Path, presentation_id: str) -> 
                 matrix = matrix or (sheet, row_number, mapping["participant"], row)
         if selected:
             break
+    if selected is None and voters is not None:
+        return _parse_voters_export(*voters, presentation_id, path)
     if selected is None and matrix is not None:
         return _parse_matrix(*matrix, presentation_id)
     if selected is None:
@@ -163,6 +175,105 @@ def _parse_loaded_workbook(workbook, path: str | Path, presentation_id: str) -> 
     if not responses:
         raise EmptyPresentationError(f"Recognized headers but no valid response rows: {Path(path).name}")
     return list(questions_by_key.values()), responses
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, time.min)
+    else:
+        token = str(value or "").strip()
+        if not token:
+            return None
+        try:
+            parsed = datetime.fromisoformat(token.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _parse_voters_export(
+    sheet,
+    header_row: int,
+    headers: tuple[Any, ...],
+    presentation_id: str,
+    path: str | Path,
+) -> tuple[list[Question], list[Response]]:
+    normalized = [_key(value) for value in headers]
+    date_column = normalized.index("date (utc)")
+    session_column = normalized.index("session")
+    voter_column = normalized.index("voter")
+
+    questions: list[Question] = []
+    by_column: dict[int, Question] = {}
+    slide_by_group: dict[str, int] = {}
+    for column, raw_header in enumerate(headers):
+        header = str(raw_header or "").strip()
+        if not header:
+            continue
+        answer_match = re.match(r"^(.*?):\s*Answer\s*$", header, re.I)
+        if answer_match:
+            title = answer_match.group(1).strip()
+            group = f"answer:{_key(title)}"
+            raw_type = ""
+        elif "::" in header:
+            prompt, criterion = header.split("::", 1)
+            prompt = prompt.rstrip(":").strip()
+            criterion = criterion.strip()
+            if not prompt or not criterion or _key(criterion) in {"name", "emoji", "answer", "score"}:
+                continue
+            title = f"{prompt} — {criterion}"
+            group = f"scale:{_key(prompt)}"
+            raw_type = "scale"
+        else:
+            continue
+        slide_index = slide_by_group.setdefault(group, len(slide_by_group) + 1)
+        question = Question(
+            stable_id("question", presentation_id, slide_index, title),
+            presentation_id,
+            slide_index,
+            title,
+            _kind(title, raw_type),
+        )
+        questions.append(question)
+        by_column[column] = question
+
+    if not questions:
+        raise UnknownSchemaError(f"Recognized Voters sheet but no interactive columns: {Path(path).name}")
+
+    responses: dict[str, Response] = {}
+    for row in sheet.iter_rows(min_row=header_row + 1, values_only=True):
+        session_token = str(row[session_column] or "").strip() if session_column < len(row) else ""
+        voter_token = str(row[voter_column] or "").strip() if voter_column < len(row) else ""
+        if not session_token or not voter_token:
+            continue
+        session_id = stable_id("session", presentation_id, session_token)
+        participant_hash = content_hash({
+            "presentation_id": presentation_id,
+            "session": session_token,
+            "participant": voter_token,
+        })
+        submitted_at = _parse_utc(row[date_column] if date_column < len(row) else None)
+        for column, question in by_column.items():
+            value = row[column] if column < len(row) else None
+            if value in (None, ""):
+                continue
+            response_id = stable_id(
+                "response", presentation_id, session_token, voter_token, question.question_id
+            )
+            responses[response_id] = Response(
+                response_id,
+                session_id,
+                question.question_id,
+                participant_hash,
+                value,
+                None,
+                submitted_at,
+            )
+    if not responses:
+        raise EmptyPresentationError(f"Recognized Voters sheet but no valid responses: {Path(path).name}")
+    return questions, list(responses.values())
 
 
 def _parse_matrix(sheet, header_row: int, participant_column: int, headers: tuple[Any, ...], presentation_id: str):

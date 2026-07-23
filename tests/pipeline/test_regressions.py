@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from zipfile import ZipFile
-from datetime import date
+from datetime import date, timezone
 from pathlib import Path
 
 import pytest
@@ -11,9 +11,17 @@ from openpyxl import Workbook, load_workbook
 from pipeline.ai import AIClassifier, Classification, minimize_for_ai, redact_pii
 from pipeline.mentimeter import PresentationRef, select_presentations
 from pipeline.models import Presentation, Question, QuestionKind, Response, Session
-from pipeline.orchestrator import Pipeline, build_public_snapshot, published_corpus, responses_with_answer_keys, validate_public_snapshot
+from pipeline.orchestrator import (
+    Pipeline,
+    build_public_snapshot,
+    published_corpus,
+    responses_with_answer_keys,
+    session_date_from_responses,
+    validate_public_snapshot,
+)
 from pipeline.parser import InvalidWorkbookError, UnknownSchemaError, parse_workbook
 from pipeline.persistence import LocalRepository, ManualImport, SupabaseRepository, question_payload
+from pipeline.privacy import valid_response_count
 from pipeline.reports import write_report
 
 
@@ -186,6 +194,65 @@ def test_parser_supports_column_oriented_matrix(tmp_path: Path) -> None:
         Question(questions[1].question_id, "p", 2, questions[1].title, QuestionKind.ACADEMIC, ("A", "B"), (1,)),
     ], responses)
     assert [response.is_correct for response in keyed] == [True, True, False, False]
+
+
+def test_parser_supports_official_voters_export_with_scales_and_sessions(tmp_path: Path) -> None:
+    path = tmp_path / "voters.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Voters"
+    sheet.append(["Note: there are more sheets in this document"])
+    sheet.append(["Each session is found on its own sheet below."])
+    sheet.append([
+        "Date (UTC)", "Session", "Voter", "Opening reaction:",
+        "Participante: Name", "Participante: Emoji", "Participante: Answer", "Participante: Score",
+        "Conduta inicial?: Name", "Conduta inicial?: Emoji", "Conduta inicial?: Answer", "Conduta inicial?: Score",
+        "Avalie os seguintes critérios:: Discussão técnica",
+        "Avalie os seguintes critérios:: Aplicabilidade",
+        "Closing reaction:",
+    ])
+    for event_date, session in (("2026-05-20", 1), ("2026-05-27", 2)):
+        for voter in (1, 2):
+            sheet.append([
+                event_date, session, voter, "Thumbs up",
+                f"name-{session}-{voter}", ":emoji:", "Residente", 0,
+                f"name-{session}-{voter}", ":emoji:", "Operar", 900,
+                5, 4, "Thumbs up",
+            ])
+    workbook.save(path)
+
+    questions, responses = parse_workbook(path, "presentation")
+
+    assert [question.title for question in questions] == [
+        "Participante",
+        "Conduta inicial?",
+        "Avalie os seguintes critérios — Discussão técnica",
+        "Avalie os seguintes critérios — Aplicabilidade",
+    ]
+    assert [question.slide_index for question in questions] == [1, 2, 3, 3]
+    assert [question.kind for question in questions] == [
+        QuestionKind.PROFILE,
+        QuestionKind.OTHER,
+        QuestionKind.EVALUATION,
+        QuestionKind.EVALUATION,
+    ]
+    assert len(responses) == 16
+    assert len({response.session_id for response in responses}) == 2
+    assert len({response.participant_id for response in responses}) == 4
+    assert valid_response_count(responses, questions) == 12
+    assert {response.submitted_at.date() for response in responses} == {
+        date(2026, 5, 20), date(2026, 5, 27)
+    }
+    assert all(response.submitted_at.tzinfo == timezone.utc for response in responses)
+    assert not any(response.value in {"Thumbs up", ":emoji:", 0, 900} for response in responses)
+    by_session = {
+        session_id: [response for response in responses if response.session_id == session_id]
+        for session_id in {response.session_id for response in responses}
+    }
+    assert {
+        session_date_from_responses(rows, date(2026, 5, 27))
+        for rows in by_session.values()
+    } == {date(2026, 5, 20), date(2026, 5, 27)}
 
 
 def test_parser_preserves_distinct_sessions_from_same_presentation(tmp_path: Path) -> None:
