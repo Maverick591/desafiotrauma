@@ -242,13 +242,18 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
-        def __init__(self) -> None:
+        def __init__(self, fail_first_wait: bool = False) -> None:
             self.waited = False
+            self.wait_calls = 0
+            self.fail_first_wait = fail_first_wait
             self.click_options = None
             self.removed = False
 
         def wait_for(self, **_kwargs) -> None:
             self.waited = True
+            self.wait_calls += 1
+            if self.fail_first_wait and self.wait_calls == 1:
+                raise TimeoutError("simulated delayed results controls")
 
         def click(self, **options) -> None:
             self.click_options = options
@@ -275,10 +280,11 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     class FakePage:
         def __init__(self) -> None:
             self.goto_call = None
-            self.download_button = FakeLocator()
+            self.download_button = FakeLocator(fail_first_wait=True)
             self.xlsx_menuitem = FakeLocator()
             self.consent = FakeLocator()
             self.roles = []
+            self.reload_calls = []
 
         def goto(self, *args, **kwargs) -> None:
             self.goto_call = (args, kwargs)
@@ -287,6 +293,9 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.roles.append((role, options))
             assert role == "button"
             return self.download_button
+
+        def reload(self, **options) -> None:
+            self.reload_calls.append(options)
 
         def locator(self, selector: str):
             if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
@@ -309,6 +318,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
+    assert page.reload_calls == [{"wait_until": "domcontentloaded", "timeout": 45_000}]
     assert page.consent.removed is True
     assert page.download_button.waited is True
     assert page.download_button.click_options == {}

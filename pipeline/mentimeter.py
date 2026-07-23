@@ -227,7 +227,13 @@ class MentimeterClient:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
         download_button = page.get_by_role("button", name="Download", exact=True)
-        download_button.wait_for(state="visible", timeout=45_000)
+        try:
+            download_button.wait_for(state="visible", timeout=45_000)
+        except Exception:
+            # Legacy result pages can remain in an insights-loading state on
+            # their first render. One clean reload reliably mounts the toolbar.
+            page.reload(wait_until="domcontentloaded", timeout=45_000)
+            download_button.wait_for(state="visible", timeout=45_000)
         # The consent component is injected asynchronously on application routes.
         # Remove it only after the results controls have mounted.
         self._remove_consent_overlay(page)
