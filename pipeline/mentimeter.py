@@ -81,7 +81,7 @@ class MentimeterClient:
         page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
         page.get_by_label(re.compile("email", re.I)).fill(self.email)
         page.get_by_test_id("password-input").fill(self.password)
-        page.get_by_role("button", name=re.compile("log in|sign in|entrar", re.I)).click()
+        page.get_by_test_id("login-btn").click()
         page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
 
     def discover(self) -> list[PresentationRef]:

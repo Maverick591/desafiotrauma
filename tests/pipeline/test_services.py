@@ -41,7 +41,7 @@ def test_mentimeter_credentials_support_local_fallback(monkeypatch) -> None:
     assert client.email.endswith(".invalid")
 
 
-def test_mentimeter_login_uses_password_input_test_id() -> None:
+def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
@@ -72,9 +72,11 @@ def test_mentimeter_login_uses_password_input_test_id() -> None:
 
         def get_by_test_id(self, test_id: str):
             self.test_ids.append(test_id)
-            return self.password
+            return {"password-input": self.password, "login-btn": self.submit}[test_id]
 
-        def get_by_role(self, *_args, **_kwargs):
+        def get_by_role(self, _role, name):
+            if name.search("Sign in with Google"):
+                raise AssertionError("login role selector also matches social auth buttons")
             return self.submit
 
         def wait_for_url(self, *_args, **_kwargs) -> None:
@@ -83,7 +85,7 @@ def test_mentimeter_login_uses_password_input_test_id() -> None:
     page = FakePage()
     MentimeterClient(email="admin@example.invalid", password="secret")._login(page)
 
-    assert page.test_ids == ["password-input"]
+    assert page.test_ids == ["password-input", "login-btn"]
     assert page.email.value == "admin@example.invalid"
     assert page.password.value == "secret"
     assert page.submit.clicked is True
