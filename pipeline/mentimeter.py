@@ -290,7 +290,33 @@ class MentimeterClient:
                 # Legacy result pages can remain in an insights-loading state on
                 # their first render. One clean reload reliably mounts the toolbar.
                 page.reload(wait_until="domcontentloaded", timeout=45_000)
-                download_button.wait_for(state="visible", timeout=45_000)
+                try:
+                    download_button.wait_for(state="visible", timeout=45_000)
+                except Exception as exc:
+                    diagnostics = page.evaluate(
+                        """
+                        () => ({
+                          url: location.href,
+                          title: document.title,
+                          buttons: [...document.querySelectorAll('button, [role="button"]')]
+                            .filter((element) => {
+                              const rect = element.getBoundingClientRect();
+                              return rect.width > 0 && rect.height > 0;
+                            })
+                            .slice(0, 30)
+                            .map((element) => ({
+                              text: String(element.textContent || '').trim().slice(0, 80),
+                              aria: element.getAttribute('aria-label'),
+                              title: element.getAttribute('title'),
+                              testid: element.getAttribute('data-testid'),
+                            })),
+                        })
+                        """
+                    )
+                    raise RuntimeError(
+                        "Mentimeter results controls unavailable: "
+                        + json.dumps(diagnostics, ensure_ascii=True)
+                    ) from exc
         def trigger_xlsx_download():
             # The consent component is injected asynchronously on application
             # routes. Remove it only after the results controls have mounted.
