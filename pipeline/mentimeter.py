@@ -231,7 +231,10 @@ class MentimeterClient:
     def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
-        download_button = page.get_by_role("button", name="Download", exact=True)
+        # Mentimeter renamed this control from "Download" to "Export" in 2026.
+        # Keep both labels so older presentations and phased UI rollouts work.
+        export_button_name = re.compile(r"^(?:Download|Export)$", re.IGNORECASE)
+        download_button = page.get_by_role("button", name=export_button_name)
 
         def expand_results_toolbar() -> bool:
             """Open Mentimeter's responsive footer when Download is collapsed."""

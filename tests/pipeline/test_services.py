@@ -332,7 +332,10 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         ("https://www.mentimeter.com/app/presentation/p1/results?source=dashboard",),
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
-    assert page.roles[0] == ("button", {"name": "Download", "exact": True})
+    role, options = page.roles[0]
+    assert role == "button"
+    assert options["name"].search("Download")
+    assert options["name"].search("Export")
     assert page.expanded is True
     assert page.reload_calls == [
         {"wait_until": "domcontentloaded", "timeout": 45_000},
