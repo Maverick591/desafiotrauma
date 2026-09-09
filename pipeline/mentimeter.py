@@ -256,11 +256,13 @@ class MentimeterClient:
                           const bottomRight = rect.right > viewportWidth * 0.55 && rect.bottom > viewportHeight * 0.55;
                           const compact = rect.width <= 96 && rect.height <= 96;
                           const visible = rect.width > 0 && rect.height > 0;
-                          return { button, rect, eligible: visible && compact && bottomRight && (describesExpansion || collapsed) };
+                          const untried = button.dataset.resultsExpanderTried !== 'true';
+                          return { button, rect, eligible: untried && visible && compact && bottomRight && (describesExpansion || collapsed) };
                         })
                         .filter((item) => item.eligible)
                         .sort((a, b) => (b.rect.right + b.rect.bottom) - (a.rect.right + a.rect.bottom));
                       if (!candidates.length) return false;
+                      candidates[0].button.dataset.resultsExpanderTried = 'true';
                       candidates[0].button.click();
                       return true;
                     }
@@ -272,10 +274,19 @@ class MentimeterClient:
         try:
             download_button.wait_for(state="visible", timeout=8_000)
         except Exception:
-            expanded = expand_results_toolbar()
-            if expanded:
-                download_button.wait_for(state="visible", timeout=15_000)
-            else:
+            expanded = False
+            # The footer can contain more than one compact menu control. Try
+            # each eligible bottom-right expander until Download is revealed.
+            for _ in range(6):
+                if not expand_results_toolbar():
+                    break
+                try:
+                    download_button.wait_for(state="visible", timeout=3_000)
+                    expanded = True
+                    break
+                except Exception:
+                    continue
+            if not expanded:
                 # Legacy result pages can remain in an insights-loading state on
                 # their first render. One clean reload reliably mounts the toolbar.
                 page.reload(wait_until="domcontentloaded", timeout=45_000)
