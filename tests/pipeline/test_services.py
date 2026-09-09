@@ -84,9 +84,10 @@ def test_mentimeter_reuses_ephemeral_authenticated_storage_state(tmp_path: Path,
 
     assert len(logins) == 1
     assert browser.options == [
-        {"accept_downloads": True},
+        {"accept_downloads": True, "viewport": {"width": 1440, "height": 1000}},
         {
             "accept_downloads": True,
+            "viewport": {"width": 1440, "height": 1000},
             "storage_state": str(tmp_path / "mentimeter-storage-state.json"),
         },
     ]
@@ -291,6 +292,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.roles = []
             self.reload_calls = []
             self.expect_calls = 0
+            self.expanded = False
 
         def goto(self, *args, **kwargs) -> None:
             self.goto_call = (args, kwargs)
@@ -299,6 +301,12 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.roles.append((role, options))
             assert role == "button"
             return self.download_button
+
+        def evaluate(self, script: str):
+            assert "expand_results_toolbar" not in script
+            assert "aria-expanded" in script
+            self.expanded = True
+            return True
 
         def reload(self, **options) -> None:
             self.reload_calls.append(options)
@@ -325,8 +333,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
     assert page.roles[0] == ("button", {"name": "Download", "exact": True})
+    assert page.expanded is True
     assert page.reload_calls == [
-        {"wait_until": "domcontentloaded", "timeout": 45_000},
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     ]
     assert page.consent.removed is True

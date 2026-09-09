@@ -110,7 +110,12 @@ class MentimeterClient:
 
     def _authenticated_page(self, browser):
         has_state = self.storage_state_path.is_file()
-        options: dict[str, Any] = {"accept_downloads": True}
+        # The results toolbar collapses at Playwright's short default viewport,
+        # hiding the Download action behind an icon-only expander.
+        options: dict[str, Any] = {
+            "accept_downloads": True,
+            "viewport": {"width": 1440, "height": 1000},
+        }
         if has_state:
             options["storage_state"] = str(self.storage_state_path)
         context = browser.new_context(**options)
@@ -227,13 +232,54 @@ class MentimeterClient:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
         download_button = page.get_by_role("button", name="Download", exact=True)
+
+        def expand_results_toolbar() -> bool:
+            """Open Mentimeter's responsive footer when Download is collapsed."""
+            try:
+                return bool(page.evaluate(
+                    """
+                    () => {
+                      const normalized = (value) => String(value || '').trim().toLowerCase();
+                      const viewportWidth = window.innerWidth;
+                      const viewportHeight = window.innerHeight;
+                      const candidates = [...document.querySelectorAll('button')]
+                        .map((button) => {
+                          const rect = button.getBoundingClientRect();
+                          const descriptor = normalized([
+                            button.getAttribute('aria-label'),
+                            button.getAttribute('title'),
+                            button.getAttribute('data-testid'),
+                            button.textContent,
+                          ].filter(Boolean).join(' '));
+                          const describesExpansion = /(expand|open|show|toolbar|controls|more|menu)/.test(descriptor);
+                          const collapsed = button.getAttribute('aria-expanded') === 'false';
+                          const bottomRight = rect.right > viewportWidth * 0.55 && rect.bottom > viewportHeight * 0.55;
+                          const compact = rect.width <= 96 && rect.height <= 96;
+                          const visible = rect.width > 0 && rect.height > 0;
+                          return { button, rect, eligible: visible && compact && bottomRight && (describesExpansion || collapsed) };
+                        })
+                        .filter((item) => item.eligible)
+                        .sort((a, b) => (b.rect.right + b.rect.bottom) - (a.rect.right + a.rect.bottom));
+                      if (!candidates.length) return false;
+                      candidates[0].button.click();
+                      return true;
+                    }
+                    """
+                ))
+            except Exception:
+                return False
+
         try:
-            download_button.wait_for(state="visible", timeout=45_000)
+            download_button.wait_for(state="visible", timeout=8_000)
         except Exception:
-            # Legacy result pages can remain in an insights-loading state on
-            # their first render. One clean reload reliably mounts the toolbar.
-            page.reload(wait_until="domcontentloaded", timeout=45_000)
-            download_button.wait_for(state="visible", timeout=45_000)
+            expanded = expand_results_toolbar()
+            if expanded:
+                download_button.wait_for(state="visible", timeout=15_000)
+            else:
+                # Legacy result pages can remain in an insights-loading state on
+                # their first render. One clean reload reliably mounts the toolbar.
+                page.reload(wait_until="domcontentloaded", timeout=45_000)
+                download_button.wait_for(state="visible", timeout=45_000)
         def trigger_xlsx_download():
             # The consent component is injected asynchronously on application
             # routes. Remove it only after the results controls have mounted.
