@@ -313,6 +313,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         def evaluate(self, script: str):
             assert "expand_results_toolbar" not in script
             assert "aria-expanded" in script
+            assert "unlabeledChevron" in script
             self.expanded = True
             return True
 

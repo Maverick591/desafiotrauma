@@ -296,7 +296,10 @@ class MentimeterClient:
                           const compact = rect.width <= 96 && rect.height <= 96;
                           const visible = rect.width > 0 && rect.height > 0;
                           const untried = button.dataset.resultsExpanderTried !== 'true';
-                          return { button, rect, eligible: untried && visible && compact && bottomRight && (describesExpansion || collapsed) };
+                          // The current Mentimeter chevron has no accessible
+                          // name, title, test id, or aria-expanded attribute.
+                          const unlabeledChevron = descriptor === '';
+                          return { button, rect, eligible: untried && visible && compact && bottomRight && (describesExpansion || collapsed || unlabeledChevron) };
                         })
                         .filter((item) => item.eligible)
                         .sort((a, b) => (b.rect.right + b.rect.bottom) - (a.rect.right + a.rect.bottom));
