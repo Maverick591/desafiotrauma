@@ -298,6 +298,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.xlsx_menuitem = FakeLocator()
             self.consent = FakeLocator()
             self.roles = []
+            self.locators = []
             self.reload_calls = []
             self.expect_calls = 0
             self.expanded = False
@@ -331,8 +332,11 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             return None
 
         def locator(self, selector: str):
+            self.locators.append(selector)
             if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
                 return self.consent
+            if selector == 'button:text-is("Export"), button:text-is("Download")':
+                return self.download_button
             assert selector == "#excel-download-button"
             return self.xlsx_menuitem
 
@@ -351,10 +355,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         ("https://www.mentimeter.com/app/presentation/p1/results?source=dashboard",),
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
-    role, options = page.roles[0]
-    assert role == "button"
-    assert options["name"].search("Download")
-    assert options["name"].search("Export")
+    assert 'button:text-is("Export"), button:text-is("Download")' in page.locators
     assert page.expanded is True
     assert page.opened_participants is True
     assert page.reload_calls == [
