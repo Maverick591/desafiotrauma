@@ -306,7 +306,9 @@ class MentimeterClient:
         open_participants_results_tab()
         # Mentimeter renamed this control from "Download" to "Export" in 2026.
         # Keep both labels so older presentations and phased UI rollouts work.
-        download_button = page.locator('button:text-is("Export"), button:text-is("Download")')
+        download_button = page.locator(
+            "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']"
+        )
 
         def expand_results_toolbar() -> bool:
             """Open Mentimeter's responsive footer when Download is collapsed."""

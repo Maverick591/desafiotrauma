@@ -335,7 +335,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.locators.append(selector)
             if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
                 return self.consent
-            if selector == 'button:text-is("Export"), button:text-is("Download")':
+            if selector == "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']":
                 return self.download_button
             assert selector == "#excel-download-button"
             return self.xlsx_menuitem
@@ -355,7 +355,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         ("https://www.mentimeter.com/app/presentation/p1/results?source=dashboard",),
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
-    assert 'button:text-is("Export"), button:text-is("Download")' in page.locators
+    assert "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']" in page.locators
     assert page.expanded is True
     assert page.opened_participants is True
     assert page.reload_calls == [
