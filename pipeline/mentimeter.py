@@ -158,7 +158,10 @@ class MentimeterClient:
         self._remove_consent_overlay(page)
         page.get_by_label(re.compile("email", re.I)).fill(self.email)
         page.get_by_test_id("password-input").fill(self.password)
-        page.get_by_test_id("login-btn").click()
+        # Cookiebot can mount after the initial DOM load and briefly cover the
+        # submit button. Force is safe here because the target is already the
+        # resolved, enabled login control.
+        page.get_by_test_id("login-btn").click(force=True)
         page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
 
     def _discover_with_page(self, page) -> list[PresentationRef]:

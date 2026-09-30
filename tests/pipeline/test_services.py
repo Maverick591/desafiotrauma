@@ -164,7 +164,7 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     assert page.password.value == "secret"
     assert page.consent.removed is True
     assert page.submit.clicked is True
-    assert page.submit.click_options == {}
+    assert page.submit.click_options == {"force": True}
 
 
 def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> None:
