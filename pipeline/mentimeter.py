@@ -267,6 +267,25 @@ class MentimeterClient:
     def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
+        # Since September 2026 the Results page opens on Highlight. Export is
+        # mounted only after switching to the Participants/Responses section.
+        self._remove_consent_overlay(page)
+        opened_participants = bool(page.evaluate(
+            """
+            () => { // open_participants_results_tab
+              const button = [...document.querySelectorAll('button')].find((element) =>
+                /^(?:Participants|Participantes)/i.test(
+                  element.getAttribute('aria-label') || element.textContent || ''
+                )
+              );
+              if (!button) return false;
+              button.click();
+              return true;
+            }
+            """
+        ))
+        if opened_participants:
+            page.wait_for_timeout(1_000)
         # Mentimeter renamed this control from "Download" to "Export" in 2026.
         # Keep both labels so older presentations and phased UI rollouts work.
         export_button_name = re.compile(r"^(?:Download|Export)$", re.IGNORECASE)
@@ -296,10 +315,7 @@ class MentimeterClient:
                           const compact = rect.width <= 96 && rect.height <= 96;
                           const visible = rect.width > 0 && rect.height > 0;
                           const untried = button.dataset.resultsExpanderTried !== 'true';
-                          // The current Mentimeter chevron has no accessible
-                          // name, title, test id, or aria-expanded attribute.
-                          const unlabeledChevron = descriptor === '';
-                          return { button, rect, eligible: untried && visible && compact && bottomRight && (describesExpansion || collapsed || unlabeledChevron) };
+                          return { button, rect, eligible: untried && visible && compact && bottomRight && (describesExpansion || collapsed) };
                         })
                         .filter((item) => item.eligible)
                         .sort((a, b) => (b.rect.right + b.rect.bottom) - (a.rect.right + a.rect.bottom));

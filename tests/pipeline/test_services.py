@@ -301,6 +301,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             self.reload_calls = []
             self.expect_calls = 0
             self.expanded = False
+            self.opened_participants = False
 
         def goto(self, *args, **kwargs) -> None:
             self.goto_call = (args, kwargs)
@@ -311,14 +312,19 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
             return self.download_button
 
         def evaluate(self, script: str):
+            if "open_participants_results_tab" in script:
+                self.opened_participants = True
+                return True
             assert "expand_results_toolbar" not in script
             assert "aria-expanded" in script
-            assert "unlabeledChevron" in script
             self.expanded = True
             return True
 
         def reload(self, **options) -> None:
             self.reload_calls.append(options)
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
 
         def locator(self, selector: str):
             if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
@@ -346,6 +352,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     assert options["name"].search("Download")
     assert options["name"].search("Export")
     assert page.expanded is True
+    assert page.opened_participants is True
     assert page.reload_calls == [
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     ]
