@@ -323,6 +323,10 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         def reload(self, **options) -> None:
             self.reload_calls.append(options)
 
+        def wait_for_selector(self, selector: str, **options) -> None:
+            assert selector == 'button[aria-label^="Participants"], button[aria-label^="Participantes"]'
+            assert options == {"state": "visible", "timeout": 20_000}
+
         def wait_for_timeout(self, _milliseconds: int) -> None:
             return None
 

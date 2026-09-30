@@ -267,25 +267,40 @@ class MentimeterClient:
     def _download_with_page(self, page, ref: PresentationRef, destination: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         page.goto(urljoin(self.base_url, ref.href), wait_until="domcontentloaded", timeout=45_000)
+
+        def open_participants_results_tab() -> bool:
+            """Open the section where the current Mentimeter UI mounts Export."""
+            self._remove_consent_overlay(page)
+            try:
+                page.wait_for_selector(
+                    'button[aria-label^="Participants"], button[aria-label^="Participantes"]',
+                    state="visible",
+                    timeout=20_000,
+                )
+                opened = bool(page.evaluate(
+                    """
+                    () => { // open_participants_results_tab
+                      const button = [...document.querySelectorAll('button')].find((element) =>
+                        /^(?:Participants|Participantes)/i.test(
+                          element.getAttribute('aria-label') || element.textContent || ''
+                        )
+                      );
+                      if (!button) return false;
+                      button.click();
+                      return true;
+                    }
+                    """
+                ))
+                if opened:
+                    page.wait_for_timeout(1_000)
+                return opened
+            except Exception:
+                # Older Results pages already expose Download without tabs.
+                return False
+
         # Since September 2026 the Results page opens on Highlight. Export is
         # mounted only after switching to the Participants/Responses section.
-        self._remove_consent_overlay(page)
-        opened_participants = bool(page.evaluate(
-            """
-            () => { // open_participants_results_tab
-              const button = [...document.querySelectorAll('button')].find((element) =>
-                /^(?:Participants|Participantes)/i.test(
-                  element.getAttribute('aria-label') || element.textContent || ''
-                )
-              );
-              if (!button) return false;
-              button.click();
-              return true;
-            }
-            """
-        ))
-        if opened_participants:
-            page.wait_for_timeout(1_000)
+        open_participants_results_tab()
         # Mentimeter renamed this control from "Download" to "Export" in 2026.
         # Keep both labels so older presentations and phased UI rollouts work.
         export_button_name = re.compile(r"^(?:Download|Export)$", re.IGNORECASE)
@@ -376,6 +391,7 @@ class MentimeterClient:
                 # Legacy result pages can remain in an insights-loading state on
                 # their first render. One clean reload reliably mounts the toolbar.
                 page.reload(wait_until="domcontentloaded", timeout=45_000)
+                open_participants_results_tab()
                 try:
                     download_button.wait_for(state="visible", timeout=45_000)
                 except Exception as exc:
@@ -420,6 +436,7 @@ class MentimeterClient:
             # Mentimeter occasionally delays XLSX generation even after the
             # menu is visible. Reload once to obtain a fresh export request.
             page.reload(wait_until="domcontentloaded", timeout=45_000)
+            open_participants_results_tab()
             download_button.wait_for(state="visible", timeout=45_000)
             download = trigger_xlsx_download()
         xlsx_path = destination / f"{ref.presentation_id}.xlsx"
