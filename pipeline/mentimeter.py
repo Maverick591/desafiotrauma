@@ -14,7 +14,11 @@ TITLE_PATTERN = re.compile(r"^Desafio Trauma\s*-\s*(\d{2}/\d{2}/\d{4})$")
 BACKFILL_START = date(2024, 10, 23)
 
 
-class EmptyPresentationResultsError(RuntimeError):
+class UnavailablePresentationResultsError(RuntimeError):
+    """Raised when Mentimeter withholds XLSX for a low-participation result."""
+
+
+class EmptyPresentationResultsError(UnavailablePresentationResultsError):
     """Raised when Mentimeter confirms a presentation has no participants."""
 
 
@@ -306,9 +310,37 @@ class MentimeterClient:
             except Exception:
                 return False
 
+        def visible_participant_count() -> int | None:
+            try:
+                value = page.evaluate(
+                    r"""
+                    () => { // visible_results_participant_count
+                      const pattern = /(?:participants?|participantes?)\s*,?\s*(\d+)\b/i;
+                      for (const element of document.querySelectorAll('button, [role="button"]')) {
+                        const rect = element.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) continue;
+                        const descriptor = `${element.getAttribute('aria-label') || ''} ${element.textContent || ''}`;
+                        const match = descriptor.match(pattern);
+                        if (match) return Number(match[1]);
+                      }
+                      return null;
+                    }
+                    """
+                )
+                return int(value) if value is not None else None
+            except Exception:
+                return None
+
         try:
             download_button.wait_for(state="visible", timeout=8_000)
         except Exception:
+            participant_count = visible_participant_count()
+            if participant_count is not None and participant_count < 10:
+                exception_type = EmptyPresentationResultsError if participant_count == 0 else UnavailablePresentationResultsError
+                raise exception_type(
+                    f"Mentimeter presentation {ref.presentation_id} cannot export XLSX "
+                    f"with {participant_count} participants"
+                )
             expanded = False
             # The footer can contain more than one compact menu control. Try
             # each eligible bottom-right expander until Download is revealed.
@@ -322,22 +354,6 @@ class MentimeterClient:
                 except Exception:
                     continue
             if not expanded:
-                results_are_empty = bool(page.evaluate(
-                    r"""
-                    () => { // results_have_zero_participants
-                      const pattern = /(?:participants?|participantes?)\s*,?\s*0\b/i;
-                      return [...document.querySelectorAll('button, [role="button"]')].some((element) => {
-                        const rect = element.getBoundingClientRect();
-                        const descriptor = `${element.getAttribute('aria-label') || ''} ${element.textContent || ''}`;
-                        return rect.width > 0 && rect.height > 0 && pattern.test(descriptor);
-                      });
-                    }
-                    """
-                ))
-                if results_are_empty:
-                    raise EmptyPresentationResultsError(
-                        f"Mentimeter presentation {ref.presentation_id} has zero participants"
-                    )
                 # Legacy result pages can remain in an insights-loading state on
                 # their first render. One clean reload reliably mounts the toolbar.
                 page.reload(wait_until="domcontentloaded", timeout=45_000)

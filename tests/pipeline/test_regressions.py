@@ -504,7 +504,7 @@ def test_partial_sessions_and_empty_copies_do_not_enter_publication(tmp_path: Pa
 
 
 def test_zero_participant_results_without_export_are_skipped(tmp_path: Path) -> None:
-    from pipeline.mentimeter import EmptyPresentationResultsError
+    from pipeline.mentimeter import UnavailablePresentationResultsError
 
     presentation = Presentation("old", "Desafio Trauma - 20/05/2026", date(2026, 5, 20), "/old")
     session = Session("old-s", "old", date(2026, 5, 20), 5, 1, True)
@@ -518,7 +518,7 @@ def test_zero_participant_results_without_export_are_skipped(tmp_path: Path) -> 
             return [PresentationRef("empty", "Desafio Trauma - 27/05/2026", "/empty")]
 
         def fetch(self, *_args):
-            raise EmptyPresentationResultsError("zero participants")
+            raise UnavailablePresentationResultsError("restricted low-participation export")
 
     result = Pipeline(client=Client(), repository=repository, workdir=tmp_path / "work").sync("incremental")
     assert result["presentations"] == 0

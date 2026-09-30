@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .ids import content_hash, stable_id
-from .mentimeter import EmptyPresentationResultsError, MentimeterClient, PresentationRef, select_presentations
+from .mentimeter import MentimeterClient, PresentationRef, UnavailablePresentationResultsError, select_presentations
 from .metrics import difficulty_band, ineffective_distractors, nps, point_biserial, rolling_average, wilson_interval
 from .models import Presentation, Question, QuestionKind, Response, Session
 from .parser import EmptyPresentationError, UnknownSchemaError, parse_workbook
@@ -99,9 +99,9 @@ class Pipeline:
                 else:
                     try:
                         xlsx_path, deck = self.client.fetch(ref, self.workdir / "raw")
-                    except EmptyPresentationResultsError:
-                        # Mentimeter omits Export for zero-participant copies.
-                        # They are expected and must not block valid presentations.
+                    except UnavailablePresentationResultsError:
+                        # Mentimeter omits Export for zero-participant copies and,
+                        # when workspace restrictions are enabled, sessions below 10.
                         continue
                     deck_path = self.workdir / "raw" / f"{ref.presentation_id}.slide_deck.json"
                     self.repository.store_source(xlsx_path, f"raw/{ref.presentation_id}/{xlsx_path.name}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ref.presentation_id)
