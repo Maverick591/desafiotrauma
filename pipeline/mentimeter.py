@@ -33,6 +33,16 @@ def matches_title(title: str) -> bool:
     return bool(TITLE_PATTERN.fullmatch(title.strip()))
 
 
+def title_from_card(*values: str | None) -> str | None:
+    """Extract the canonical title when Mentimeter appends card metadata."""
+    for value in values:
+        for line in (value or "").splitlines():
+            title = line.strip()
+            if matches_title(title):
+                return title
+    return None
+
+
 def extract_slide_deck(payload: Any) -> dict[str, Any] | None:
     if isinstance(payload, dict):
         if isinstance(payload.get("slide_deck"), dict):
@@ -205,15 +215,33 @@ class MentimeterClient:
         result: dict[str, PresentationRef] = {}
         for index in range(anchors.count()):
             anchor = anchors.nth(index)
-            title = (anchor.inner_text() or "").strip()
             href = anchor.get_attribute("href") or ""
-            if not matches_title(title):
+            title = title_from_card(
+                anchor.inner_text(),
+                anchor.get_attribute("aria-label"),
+                anchor.get_attribute("title"),
+            )
+            if not title or not matches_title(title):
                 continue
             match = re.search(r"/presentation/([^/?]+)", href)
             if match:
                 presentation_id = match.group(1)
                 results_href = f"/app/presentation/{presentation_id}/results?source=dashboard"
                 result[presentation_id] = PresentationRef(presentation_id, title, results_href)
+        if not result:
+            diagnostics = []
+            for index in range(min(anchors.count(), 20)):
+                anchor = anchors.nth(index)
+                diagnostics.append({
+                    "text": (anchor.inner_text() or "").strip()[:120],
+                    "href": (anchor.get_attribute("href") or "")[:180],
+                    "aria": (anchor.get_attribute("aria-label") or "")[:120],
+                    "title": (anchor.get_attribute("title") or "")[:120],
+                })
+            raise RuntimeError(
+                "No Desafio Trauma presentations matched current cards: "
+                + json.dumps(diagnostics, ensure_ascii=True)
+            )
         return sorted(result.values(), key=lambda ref: ref.session_date)
 
     def discover(self) -> list[PresentationRef]:

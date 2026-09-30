@@ -15,6 +15,7 @@ from pipeline.mentimeter import (
     matches_title,
     remember_json_response,
     select_presentations,
+    title_from_card,
 )
 from pipeline.models import Presentation, Question, QuestionKind, Response, Session
 from pipeline.orchestrator import Pipeline, SnapshotManager, questions_from_deck
@@ -35,6 +36,13 @@ def test_discovery_title_is_strict_and_selection_reprocesses_two_recent() -> Non
     assert {r.presentation_id for r in selected} == {"1", "3", "4"}
     older = PresentationRef("legacy", "Desafio Trauma - 22/10/2024", "/legacy")
     assert select_presentations([older, *refs], mode="backfill") == refs
+
+
+def test_title_from_card_ignores_appended_mentimeter_metadata() -> None:
+    assert title_from_card("Desafio Trauma - 23/09/2026\nEdited yesterday") == "Desafio Trauma - 23/09/2026"
+    assert title_from_card("Edited yesterday", "Desafio Trauma - 30/09/2026") == "Desafio Trauma - 30/09/2026"
+    assert title_from_card("Desafio Trauma - 30/09/2026 copy (1)") is None
+    assert title_from_card("Unrelated presentation") is None
 
 
 def test_mentimeter_credentials_support_local_fallback(monkeypatch) -> None:
@@ -212,7 +220,7 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
                 FakeLink("Edited November 6, 2024", "/app/presentation/p1/edit?source=dashboard"),
                 FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit?source=dashboard"),
                 FakeLink("Desafio Trauma - 22/07/2026 copy (1)", "/app/presentation/copy/edit"),
-                FakeLink("Desafio Trauma - 22/07/2026", "/app/presentation/p2/edit?source=dashboard"),
+                FakeLink("Desafio Trauma - 22/07/2026\nEdited yesterday", "/app/presentation/p2/edit?source=dashboard"),
                 FakeLink("Desafio Trauma - 22/07/2026", "/app/presentation/p2/edit?source=dashboard"),
             ])
 
