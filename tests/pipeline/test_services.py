@@ -251,10 +251,11 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
-        def __init__(self, fail_first_wait: bool = False) -> None:
+        def __init__(self, fail_first_wait: bool = False, text: str = "") -> None:
             self.waited = False
             self.wait_calls = 0
             self.fail_first_wait = fail_first_wait
+            self.text = text
             self.click_options = None
             self.removed = False
 
@@ -266,6 +267,9 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
 
         def click(self, **options) -> None:
             self.click_options = options
+
+        def inner_text(self) -> str:
+            return self.text
 
         def count(self) -> int:
             return 1
@@ -294,7 +298,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     class FakePage:
         def __init__(self) -> None:
             self.goto_call = None
-            self.download_button = FakeLocator(fail_first_wait=True)
+            self.download_button = FakeLocator(fail_first_wait=True, text="Download")
             self.xlsx_menuitem = FakeLocator()
             self.consent = FakeLocator()
             self.roles = []
