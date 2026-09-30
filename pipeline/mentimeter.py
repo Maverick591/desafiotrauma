@@ -14,6 +14,10 @@ TITLE_PATTERN = re.compile(r"^Desafio Trauma\s*-\s*(\d{2}/\d{2}/\d{4})$")
 BACKFILL_START = date(2024, 10, 23)
 
 
+class EmptyPresentationResultsError(RuntimeError):
+    """Raised when Mentimeter confirms a presentation has no participants."""
+
+
 @dataclass(frozen=True, slots=True)
 class PresentationRef:
     presentation_id: str
@@ -318,6 +322,22 @@ class MentimeterClient:
                 except Exception:
                     continue
             if not expanded:
+                results_are_empty = bool(page.evaluate(
+                    r"""
+                    () => { // results_have_zero_participants
+                      const pattern = /(?:participants?|participantes?)\s*,?\s*0\b/i;
+                      return [...document.querySelectorAll('button, [role="button"]')].some((element) => {
+                        const rect = element.getBoundingClientRect();
+                        const descriptor = `${element.getAttribute('aria-label') || ''} ${element.textContent || ''}`;
+                        return rect.width > 0 && rect.height > 0 && pattern.test(descriptor);
+                      });
+                    }
+                    """
+                ))
+                if results_are_empty:
+                    raise EmptyPresentationResultsError(
+                        f"Mentimeter presentation {ref.presentation_id} has zero participants"
+                    )
                 # Legacy result pages can remain in an insights-loading state on
                 # their first render. One clean reload reliably mounts the toolbar.
                 page.reload(wait_until="domcontentloaded", timeout=45_000)

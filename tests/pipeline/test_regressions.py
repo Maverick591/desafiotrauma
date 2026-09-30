@@ -503,6 +503,28 @@ def test_partial_sessions_and_empty_copies_do_not_enter_publication(tmp_path: Pa
     assert json.loads((tmp_path / "repo/last_good_snapshot.json").read_text())["snapshot"]["overview"]["presentations"] == 1
 
 
+def test_zero_participant_results_without_export_are_skipped(tmp_path: Path) -> None:
+    from pipeline.mentimeter import EmptyPresentationResultsError
+
+    presentation = Presentation("old", "Desafio Trauma - 20/05/2026", date(2026, 5, 20), "/old")
+    session = Session("old-s", "old", date(2026, 5, 20), 5, 1, True)
+    question = Question("old-q", "old", 1, "Old", QuestionKind.ACADEMIC, ("A", "B"), (0,))
+    responses = [Response(f"old-r{i}", "old-s", "old-q", f"old-u{i}", "A", True) for i in range(5)]
+    repository = LocalRepository(tmp_path / "repo")
+    repository._corpus = ([presentation], [session], [question], responses)
+
+    class Client:
+        def discover(self):
+            return [PresentationRef("empty", "Desafio Trauma - 27/05/2026", "/empty")]
+
+        def fetch(self, *_args):
+            raise EmptyPresentationResultsError("zero participants")
+
+    result = Pipeline(client=Client(), repository=repository, workdir=tmp_path / "work").sync("incremental")
+    assert result["presentations"] == 0
+    assert result["corpus_presentations"] == 1
+
+
 def test_manual_without_id_processes_pending_import(tmp_path: Path, synthetic_reference_xlsx: Path) -> None:
     class ManualRepository(LocalRepository):
         def pending_manual_imports(self, destination):
