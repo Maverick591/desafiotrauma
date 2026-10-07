@@ -17,6 +17,7 @@ from .models import Presentation, Question, QuestionKind, Response, Session
 from .parser import EmptyPresentationError, UnknownSchemaError, parse_workbook
 from .persistence import SupabaseRepository
 from .privacy import privacy_safe_corpus, valid_response_count
+from zoneinfo import ZoneInfo
 from .reports import write_report
 
 
@@ -53,6 +54,14 @@ def questions_from_deck(deck: dict[str, Any], presentation_id: str) -> list[Ques
 def session_date_from_responses(responses: list[Response], fallback: date) -> date:
     dates = [response.submitted_at.date() for response in responses if response.submitted_at is not None]
     return min(dates) if dates else fallback
+
+
+def session_can_publish(session_date: date, participants: int, slides: int,
+                        has_responses: bool, now: datetime) -> bool:
+    # Noon synchronization must include the meeting held that same morning.
+    # Empty/future meetings remain excluded, in the meeting's local timezone.
+    today = now.astimezone(ZoneInfo("America/Sao_Paulo")).date()
+    return bool(has_responses and participants and slides and session_date <= today)
 
 
 class Pipeline:
@@ -146,7 +155,8 @@ class Pipeline:
                 session_responses = [response for response in parsed_responses if response.session_id == session_id]
                 participants = len({response.participant_id for response in session_responses})
                 session_date = session_date_from_responses(session_responses, event_date)
-                complete = bool(session_responses and enriched and participants and interactive_slides and session_date < now.date())
+                complete = session_can_publish(session_date, participants, interactive_slides,
+                                               bool(session_responses and enriched), now)
                 sessions.append(Session(session_id, ref.presentation_id, session_date, participants, interactive_slides, complete))
             questions.extend(enriched); responses.extend(parsed_responses)
         if mode == "manual" and not presentations:

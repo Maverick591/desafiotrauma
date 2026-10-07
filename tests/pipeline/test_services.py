@@ -45,6 +45,18 @@ def test_title_from_card_ignores_appended_mentimeter_metadata() -> None:
     assert title_from_card("Unrelated presentation") is None
 
 
+def test_noon_sync_publishes_same_day_but_not_empty_or_future_meetings() -> None:
+    from pipeline.orchestrator import session_can_publish
+
+    noon = datetime(2026, 10, 7, 15, tzinfo=timezone.utc)
+    assert session_can_publish(date(2026, 10, 7), 24, 7, True, noon)
+    assert not session_can_publish(date(2026, 10, 8), 24, 7, True, noon)
+    assert not session_can_publish(date(2026, 10, 7), 0, 7, False, noon)
+    # 02:00 UTC is still the previous day in Sao Paulo.
+    midnight_utc = datetime(2026, 10, 7, 2, tzinfo=timezone.utc)
+    assert not session_can_publish(date(2026, 10, 7), 24, 7, True, midnight_utc)
+
+
 def test_mentimeter_credentials_support_local_fallback(monkeypatch) -> None:
     from pipeline.mentimeter import MentimeterClient
 
