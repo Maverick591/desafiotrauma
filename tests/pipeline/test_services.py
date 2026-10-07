@@ -204,6 +204,10 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
 
         def goto(self, url: str, **_kwargs) -> None:
             self.urls.append(url)
+            self.states = iter([
+                {"links": 3, "loading": True, "scrollHeight": 1000},
+                *[{"links": 6, "loading": False, "scrollHeight": 2000}] * 4,
+            ])
 
         def wait_for_selector(self, _selector: str, **_kwargs) -> None:
             return None
@@ -215,6 +219,13 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
                     FakeLink("Desafio Trauma", "/app/folder/2601315"),
                 ])
             assert 'href*="/edit"' in selector
+            if self.urls[-1].endswith("/dashboard"):
+                return FakeLocator([
+                    FakeLink("Desafio Trauma - 30/09/2026", "/app/presentation/recent/edit"),
+                    FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit"),
+                    FakeLink("Desafio Trauma - 30/09/2026 copy (1)", "/app/presentation/copy/edit"),
+                    FakeLink("Other project", "/app/presentation/unrelated/edit"),
+                ])
             return FakeLocator([
                 FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit?source=dashboard"),
                 FakeLink("Edited November 6, 2024", "/app/presentation/p1/edit?source=dashboard"),
@@ -240,10 +251,12 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
     assert [(ref.presentation_id, ref.title) for ref in refs] == [
         ("p1", "Desafio Trauma - 06/11/2024"),
         ("p2", "Desafio Trauma - 22/07/2026"),
+        ("recent", "Desafio Trauma - 30/09/2026"),
     ]
     assert [ref.href for ref in refs] == [
         "/app/presentation/p1/results?source=dashboard",
         "/app/presentation/p2/results?source=dashboard",
+        "/app/presentation/recent/results?source=dashboard",
     ]
 
 

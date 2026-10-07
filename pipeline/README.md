@@ -3,6 +3,13 @@
 Python 3.11+ ETL for authenticated Mentimeter discovery, XLSX/slide-deck ingestion,
 analytics, AI classification, Supabase persistence and public/private reports.
 
+Discovery reconciles canonical Desafio Trauma presentations in both My Mentis
+and the historical Desafio Trauma folder, deduplicating by presentation ID.
+GitHub Actions runs every Wednesday at 12:00 America/Sao_Paulo (15:00 UTC).
+The companion Codex reconciliation reads institutional email notifications and
+checks missing presentation IDs against this source; email notices alone are
+not treated as response counts. Tuesday editorial preparation is separate.
+
 ```bash
 python3 -m pip install -r pipeline/requirements.txt
 playwright install chromium

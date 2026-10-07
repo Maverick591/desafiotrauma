@@ -178,9 +178,17 @@ class MentimeterClient:
         if not folder_href:
             raise RuntimeError('Mentimeter folder "Desafio Trauma" was not found')
 
+        # New editorial presentations may stay in My Mentis instead of the
+        # historical folder. Collect both libraries and deduplicate by ID.
+        result = self._collect_library_cards(page)
         page.goto(urljoin(self.base_url, folder_href), wait_until="domcontentloaded")
+        result.update(self._collect_library_cards(page))
+        if not result:
+            raise RuntimeError("No Desafio Trauma presentations matched either library")
+        return sorted(result.values(), key=lambda ref: ref.session_date)
+
+    def _collect_library_cards(self, page) -> dict[str, PresentationRef]:
         presentation_selector = 'a[href*="/app/presentation/"][href*="/edit"]'
-        page.wait_for_selector(presentation_selector, timeout=30_000)
 
         # The library uses a nested overflow container and loads cards in batches.
         # Require three unchanged, non-loading observations before collecting links.
@@ -239,21 +247,7 @@ class MentimeterClient:
                 presentation_id = match.group(1)
                 results_href = f"/app/presentation/{presentation_id}/results?source=dashboard"
                 result[presentation_id] = PresentationRef(presentation_id, title, results_href)
-        if not result:
-            diagnostics = []
-            for index in range(min(anchors.count(), 20)):
-                anchor = anchors.nth(index)
-                diagnostics.append({
-                    "text": (anchor.inner_text() or "").strip()[:120],
-                    "href": (anchor.get_attribute("href") or "")[:180],
-                    "aria": (anchor.get_attribute("aria-label") or "")[:120],
-                    "title": (anchor.get_attribute("title") or "")[:120],
-                })
-            raise RuntimeError(
-                "No Desafio Trauma presentations matched current cards: "
-                + json.dumps(diagnostics, ensure_ascii=True)
-            )
-        return sorted(result.values(), key=lambda ref: ref.session_date)
+        return result
 
     def discover(self) -> list[PresentationRef]:
         from playwright.sync_api import sync_playwright

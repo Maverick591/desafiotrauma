@@ -2,8 +2,8 @@ name: Mentimeter sync
 
 on:
   schedule:
-    # Quinta-feira, 07:00 em America/Belem (UTC-3).
-    - cron: "0 10 * * 4"
+    # Quarta-feira, 12:00 em America/Sao_Paulo (UTC-3).
+    - cron: "0 15 * * 3"
   workflow_dispatch:
     inputs:
       mode:
