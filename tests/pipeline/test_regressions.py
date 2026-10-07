@@ -501,6 +501,7 @@ def test_partial_sessions_and_empty_copies_do_not_enter_publication(tmp_path: Pa
     result = Pipeline(client=Client(), repository=repository, workdir=tmp_path / "work").sync("incremental")
     assert result["presentations"] == 0
     assert json.loads((tmp_path / "repo/last_good_snapshot.json").read_text())["snapshot"]["overview"]["presentations"] == 1
+    assert result["skipped"] == [{"presentation_id": "empty", "date": "2026-07-22", "reason": "no_responses"}]
 
 
 def test_zero_participant_results_without_export_are_skipped(tmp_path: Path) -> None:
@@ -523,6 +524,7 @@ def test_zero_participant_results_without_export_are_skipped(tmp_path: Path) -> 
     result = Pipeline(client=Client(), repository=repository, workdir=tmp_path / "work").sync("incremental")
     assert result["presentations"] == 0
     assert result["corpus_presentations"] == 1
+    assert result["skipped"] == [{"presentation_id": "empty", "date": "2026-05-27", "reason": "export_unavailable"}]
 
 
 def test_manual_without_id_processes_pending_import(tmp_path: Path, synthetic_reference_xlsx: Path) -> None:

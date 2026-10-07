@@ -9,15 +9,15 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from .ids import content_hash, stable_id
-from .mentimeter import MentimeterClient, PresentationRef, UnavailablePresentationResultsError, select_presentations
+from .mentimeter import EmptyPresentationResultsError, MentimeterClient, PresentationRef, UnavailablePresentationResultsError, select_presentations
 from .metrics import difficulty_band, ineffective_distractors, nps, point_biserial, rolling_average, wilson_interval
 from .models import Presentation, Question, QuestionKind, Response, Session
 from .parser import EmptyPresentationError, UnknownSchemaError, parse_workbook
 from .persistence import SupabaseRepository
 from .privacy import privacy_safe_corpus, valid_response_count
-from zoneinfo import ZoneInfo
 from .reports import write_report
 
 
@@ -95,6 +95,7 @@ class Pipeline:
         existing_questions = {q.question_id: q for q in existing_corpus[2]}
         presentations: list[Presentation] = []; sessions: list[Session] = []
         questions: list[Question] = []; responses: list[Response] = []
+        skipped: list[dict[str, str]] = []
         accepted_manual_import_ids: set[str] = set()
         for item in selected:
             if hasattr(item, "local_path"):
@@ -108,9 +109,12 @@ class Pipeline:
                 else:
                     try:
                         xlsx_path, deck = self.client.fetch(ref, self.workdir / "raw")
-                    except UnavailablePresentationResultsError:
+                    except UnavailablePresentationResultsError as exc:
                         # Mentimeter omits Export for zero-participant copies and,
                         # when workspace restrictions are enabled, sessions below 10.
+                        skipped.append({"presentation_id": ref.presentation_id,
+                                        "date": ref.session_date.isoformat(),
+                                        "reason": "no_responses" if isinstance(exc, EmptyPresentationResultsError) else "export_unavailable"})
                         continue
                     deck_path = self.workdir / "raw" / f"{ref.presentation_id}.slide_deck.json"
                     self.repository.store_source(xlsx_path, f"raw/{ref.presentation_id}/{xlsx_path.name}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ref.presentation_id)
@@ -119,6 +123,8 @@ class Pipeline:
                 parsed_questions, parsed_responses = parse_workbook(xlsx_path, ref.presentation_id)
             except EmptyPresentationError:
                 # Empty copies are expected in Mentimeter and must not poison the run.
+                skipped.append({"presentation_id": ref.presentation_id,
+                                "date": ref.session_date.isoformat(), "reason": "no_responses"})
                 if hasattr(item, "import_id"):
                     self.repository.reject_manual_import(
                         item.import_id,
@@ -188,6 +194,7 @@ class Pipeline:
                 imported_question_ids = {q.question_id for q in questions if q.presentation_id == item.presentation_external_id}
                 manual_results.append({"id": item.import_id, "row_count": sum(r.question_id in imported_question_ids for r in responses)})
         result = {"mode": mode, "selected": len(selected), "presentations": len(presentations), "sessions": len(sessions), "questions": len(questions), "responses": len(responses), "corpus_presentations": len(full_presentations), "artifacts": {"public": public_remote, "private": private_remote}, "dry_run": False}
+        result["skipped"] = skipped
         if self.classifier: result["ai"] = self.classifier.usage_summary
         # RPC publishes the snapshot and marks pipeline_runs succeeded atomically. Nothing follows it.
         self.repository.publish_snapshot(snapshot_id, public_remote, private_remote, snapshot, result, self.classifier.usage_summary if self.classifier else None, manual_results)
