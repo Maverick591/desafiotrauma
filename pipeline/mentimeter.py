@@ -429,13 +429,17 @@ class MentimeterClient:
             # The consent component is injected asynchronously on application
             # routes. Remove it only after the results controls have mounted.
             self._remove_consent_overlay(page)
-            if (download_button.inner_text() or "").strip().casefold() == "export":
-                # Current Participants UI generates the spreadsheet directly.
+            direct_export = (
+                (download_button.inner_text() or "").strip().casefold() == "export"
+                and download_button.get_attribute("aria-haspopup") != "menu"
+            )
+            if direct_export:
+                # Some Participants versions generate the spreadsheet directly.
                 with page.expect_event("download", timeout=60_000) as download_info:
                     download_button.click()
                 return download_info.value
 
-            # Legacy Results UI opens a format menu from Download.
+            # Download and current Export menus require choosing the XLSX item.
             download_button.click()
             xlsx_menuitem = page.locator("#excel-download-button")
             xlsx_menuitem.wait_for(state="visible", timeout=15_000)

@@ -280,17 +280,21 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards(accessib
     ]
 
 
-def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path) -> None:
+@pytest.mark.parametrize("label,popup,menu_download", [
+    ("Download", None, True), ("Export", "menu", True), ("Export", None, False),
+])
+def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path, label, popup, menu_download) -> None:
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
-        def __init__(self, fail_first_wait: bool = False, text: str = "") -> None:
+        def __init__(self, fail_first_wait: bool = False, text: str = "", has_popup=None) -> None:
             self.waited = False
             self.wait_calls = 0
             self.fail_first_wait = fail_first_wait
             self.text = text
             self.click_options = None
             self.removed = False
+            self.has_popup = has_popup
 
         def wait_for(self, **_kwargs) -> None:
             self.waited = True
@@ -303,6 +307,9 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
 
         def inner_text(self) -> str:
             return self.text
+
+        def get_attribute(self, name):
+            return self.has_popup if name == "aria-haspopup" else None
 
         def count(self) -> int:
             return 1
@@ -317,21 +324,22 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     class FakeDownloadContext:
         value = FakeDownload()
 
-        def __init__(self, fail: bool = False) -> None:
+        def __init__(self, fail: bool = False, trigger=None) -> None:
             self.fail = fail
+            self.trigger = trigger
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args) -> None:
-            if self.fail:
+            if self.fail or self.trigger.click_options is None:
                 raise TimeoutError("simulated delayed XLSX generation")
             return None
 
     class FakePage:
         def __init__(self) -> None:
             self.goto_call = None
-            self.download_button = FakeLocator(fail_first_wait=True, text="Download")
+            self.download_button = FakeLocator(fail_first_wait=True, text=label, has_popup=popup)
             self.xlsx_menuitem = FakeLocator()
             self.consent = FakeLocator()
             self.roles = []
@@ -380,7 +388,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
         def expect_event(self, event: str, **_kwargs):
             assert event == "download"
             self.expect_calls += 1
-            return FakeDownloadContext(fail=self.expect_calls == 1)
+            return FakeDownloadContext(fail=self.expect_calls == 1,
+                                       trigger=self.xlsx_menuitem if menu_download else self.download_button)
 
     page = FakePage()
     ref = PresentationRef("p1", "Desafio Trauma - 27/05/2026", "/app/presentation/p1/results?source=dashboard")
@@ -401,8 +410,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path)
     assert page.consent.removed is True
     assert page.download_button.waited is True
     assert page.download_button.click_options == {}
-    assert page.xlsx_menuitem.waited is True
-    assert page.xlsx_menuitem.click_options == {}
+    assert page.xlsx_menuitem.waited is menu_download
+    assert page.xlsx_menuitem.click_options == ({} if menu_download else None)
     assert path.read_bytes() == b"xlsx"
 
 
