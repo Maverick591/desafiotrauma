@@ -239,6 +239,14 @@ class MentimeterClient:
                 anchor.inner_text(),
                 anchor.get_attribute("aria-label"),
                 anchor.get_attribute("title"),
+                # Current cards use an empty overlay link whose accessible name
+                # comes from a sibling title referenced by aria-labelledby.
+                anchor.evaluate(r"""element =>
+                    (element.getAttribute('aria-labelledby') || '').split(/\s+/)
+                      .filter(Boolean)
+                      .map(id => document.getElementById(id)?.textContent || '')
+                      .join('\n')
+                """) if anchor.get_attribute("aria-labelledby") else None,
             )
             if not title or not matches_title(title):
                 continue

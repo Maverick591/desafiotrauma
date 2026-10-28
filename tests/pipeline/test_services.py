@@ -179,7 +179,8 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     assert page.submit.click_options == {"force": True}
 
 
-def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> None:
+@pytest.mark.parametrize("accessible_labels", [False, True])
+def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards(accessible_labels) -> None:
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
@@ -193,15 +194,21 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
             return self.items[index]
 
     class FakeLink:
-        def __init__(self, text: str, href: str) -> None:
+        def __init__(self, text: str, href: str, labelled_title: str | None = None) -> None:
             self.text = text
             self.href = href
+            self.labelled_title = labelled_title
 
         def inner_text(self) -> str:
             return self.text
 
         def get_attribute(self, name: str):
+            if name == "aria-labelledby" and self.labelled_title:
+                return "card-title"
             return self.href if name == "href" else None
+
+        def evaluate(self, _script: str):
+            return self.labelled_title or ""
 
     class FakePage:
         def __init__(self) -> None:
@@ -233,7 +240,8 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards() -> Non
             assert 'href*="/edit"' in selector
             if self.urls[-1].endswith("/dashboard"):
                 return FakeLocator([
-                    FakeLink("Desafio Trauma - 30/09/2026", "/app/presentation/recent/edit"),
+                    FakeLink("" if accessible_labels else "Desafio Trauma - 30/09/2026", "/app/presentation/recent/edit",
+                             "Desafio Trauma - 30/09/2026" if accessible_labels else None),
                     FakeLink("Desafio Trauma - 06/11/2024", "/app/presentation/p1/edit"),
                     FakeLink("Desafio Trauma - 30/09/2026 copy (1)", "/app/presentation/copy/edit"),
                     FakeLink("Other project", "/app/presentation/unrelated/edit"),
