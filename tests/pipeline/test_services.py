@@ -113,7 +113,7 @@ def test_mentimeter_reuses_ephemeral_authenticated_storage_state(tmp_path: Path,
     ]
 
 
-@pytest.mark.parametrize("variant", ["legacy", "identifier_first", "other_origin"])
+@pytest.mark.parametrize("variant", ["legacy", "identifier_first", "password_choice", "other_origin"])
 def test_mentimeter_login_handles_both_password_forms(variant) -> None:
     from pipeline.mentimeter import MentimeterClient
 
@@ -152,6 +152,7 @@ def test_mentimeter_login_handles_both_password_forms(variant) -> None:
         def click(self, **options) -> None:
             self.clicked = True
             self.click_options = options
+            self.on_submit()
 
         def count(self) -> int:
             return 1
@@ -164,11 +165,19 @@ def test_mentimeter_login_handles_both_password_forms(variant) -> None:
             self.email = FakeLocator()
             self.url = "https://www.mentimeter.com/auth/login"
             self.after_identifier = False
+            self.password_chosen = False
             self.identifier = FakeLocator(
                 lambda: identifier_first and not self.after_identifier,
                 self.advance_identifier,
             )
-            self.password = FakeLocator(lambda: not identifier_first or self.after_identifier)
+            self.password_choice = FakeLocator(
+                lambda: variant == "password_choice" and self.after_identifier and not self.password_chosen,
+                lambda: setattr(self, "password_chosen", True),
+            )
+            self.password = FakeLocator(
+                lambda: not identifier_first
+                or (self.after_identifier and (variant != "password_choice" or self.password_chosen))
+            )
             self.submit = FakeLocator(lambda: not identifier_first)
             self.password.on_submit = lambda: self.submit.click()
             self.consent = FakeLocator()
@@ -198,7 +207,11 @@ def test_mentimeter_login_handles_both_password_forms(variant) -> None:
             assert selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop"
             return self.consent
 
-        def get_by_role(self, _role, name):
+        def get_by_role(self, _role, name, **_options):
+            if name.search("Use password"):
+                return self.password_choice
+            if name.search("Reject all"):
+                return FakeLocator(lambda: False)
             if name.search("Sign in with Google"):
                 raise AssertionError("login role selector also matches social auth buttons")
             return self.submit
@@ -222,6 +235,7 @@ def test_mentimeter_login_handles_both_password_forms(variant) -> None:
     assert "password-input" in page.test_ids and "login-btn" in page.test_ids
     assert (page.identifier if identifier_first else page.email).value == "admin@example.invalid"
     assert page.after_identifier is identifier_first
+    assert page.password_chosen is (variant == "password_choice")
     assert page.password.value == "secret"
     assert page.consent.removed is True
     assert page.submit.clicked is True

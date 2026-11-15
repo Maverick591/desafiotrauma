@@ -169,6 +169,23 @@ class MentimeterClient:
             identifier.fill(self.email)
             identifier.press("Enter")
             password = page.locator('input[type="password"]')
+            use_password = page.get_by_role(
+                "button", name=re.compile(r"^(Use password|Usar (?:a )?senha)$", re.I),
+                include_hidden=True,
+            )
+            password.or_(use_password).first.wait_for(state="visible", timeout=form_timeout)
+            if not self._is_login_origin(page.url):
+                raise RuntimeError("Mentimeter login left the expected origin")
+            if not password.is_visible():
+                # This variant offers Google and password as distinct methods.
+                # Reject non-essential cookies if the dialog appeared during
+                # the transition, then select the site's own password option.
+                reject_cookies = page.get_by_role(
+                    "button", name=re.compile(r"^(Reject all|Rejeitar tudo|Recusar tudo)$", re.I),
+                )
+                if reject_cookies.is_visible():
+                    reject_cookies.click()
+                use_password.click()
             password.wait_for(state="visible", timeout=form_timeout)
         else:
             page.get_by_label(re.compile("email", re.I)).fill(self.email)
