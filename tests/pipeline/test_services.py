@@ -113,18 +113,41 @@ def test_mentimeter_reuses_ephemeral_authenticated_storage_state(tmp_path: Path,
     ]
 
 
-def test_mentimeter_login_uses_stable_form_test_ids() -> None:
+@pytest.mark.parametrize("variant", ["legacy", "identifier_first", "other_origin"])
+def test_mentimeter_login_handles_both_password_forms(variant) -> None:
     from pipeline.mentimeter import MentimeterClient
 
+    identifier_first = variant != "legacy"
+
     class FakeLocator:
-        def __init__(self) -> None:
+        def __init__(self, visible=lambda: True, on_submit=lambda: None) -> None:
             self.value = None
             self.clicked = False
             self.click_options = {}
             self.removed = False
+            self.visible = visible
+            self.on_submit = on_submit
 
         def fill(self, value: str) -> None:
+            assert self.is_visible(), "login input is not visible on this step"
             self.value = value
+
+        def press(self, key: str) -> None:
+            assert key == "Enter" and self.value is not None
+            self.on_submit()
+
+        def is_visible(self) -> bool:
+            return self.visible()
+
+        def or_(self, other):
+            return FakeLocator(lambda: self.is_visible() or other.is_visible())
+
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, **_options) -> None:
+            assert self.is_visible(), "timed out waiting for login form"
 
         def click(self, **options) -> None:
             self.clicked = True
@@ -139,24 +162,39 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
     class FakePage:
         def __init__(self) -> None:
             self.email = FakeLocator()
-            self.password = FakeLocator()
-            self.submit = FakeLocator()
+            self.url = "https://www.mentimeter.com/auth/login"
+            self.after_identifier = False
+            self.identifier = FakeLocator(
+                lambda: identifier_first and not self.after_identifier,
+                self.advance_identifier,
+            )
+            self.password = FakeLocator(lambda: not identifier_first or self.after_identifier)
+            self.submit = FakeLocator(lambda: not identifier_first)
+            self.password.on_submit = lambda: self.submit.click()
             self.consent = FakeLocator()
             self.test_ids: list[str] = []
 
         def goto(self, *_args, **_kwargs) -> None:
             return None
 
+        def advance_identifier(self) -> None:
+            assert self.identifier.value == "admin@example.invalid"
+            self.after_identifier = True
+            if variant == "other_origin":
+                self.url = "https://identity.example.invalid/auth"
+
         def get_by_label(self, pattern):
             if pattern.search("Show password"):
                 raise AssertionError("password label selector also matches the visibility button")
-            return self.email
+            return self.identifier if identifier_first else self.email
 
         def get_by_test_id(self, test_id: str):
             self.test_ids.append(test_id)
-            return {"password-input": self.password, "login-btn": self.submit}[test_id]
+            return {"identifier-input": self.identifier, "password-input": self.password, "login-btn": self.submit}[test_id]
 
         def locator(self, selector: str):
+            if selector == 'input[type="password"]':
+                return self.password
             assert selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop"
             return self.consent
 
@@ -165,18 +203,29 @@ def test_mentimeter_login_uses_stable_form_test_ids() -> None:
                 raise AssertionError("login role selector also matches social auth buttons")
             return self.submit
 
-        def wait_for_url(self, *_args, **_kwargs) -> None:
-            return None
+        def wait_for_url(self, matches, **_kwargs) -> None:
+            self.url = "https://www.mentimeter.com/app/dashboard"
+            assert matches(self.url)
+            assert not matches("https://identity.example.invalid/app/dashboard")
+            assert not matches("https://www.mentimeter.com/auth/login?next=/app/dashboard")
 
     page = FakePage()
-    MentimeterClient(email="admin@example.invalid", password="secret")._login(page)
+    client = MentimeterClient(email="admin@example.invalid", password="secret")
+    if variant == "other_origin":
+        with pytest.raises(RuntimeError, match="left the expected origin"):
+            client._login(page)
+        assert page.password.value is None
+        assert not page.submit.clicked
+        return
+    client._login(page)
 
-    assert page.test_ids == ["password-input", "login-btn"]
-    assert page.email.value == "admin@example.invalid"
+    assert "password-input" in page.test_ids and "login-btn" in page.test_ids
+    assert (page.identifier if identifier_first else page.email).value == "admin@example.invalid"
+    assert page.after_identifier is identifier_first
     assert page.password.value == "secret"
     assert page.consent.removed is True
     assert page.submit.clicked is True
-    assert page.submit.click_options == {"force": True}
+    assert page.submit.click_options == ({} if identifier_first else {"force": True})
 
 
 @pytest.mark.parametrize("accessible_labels", [False, True])

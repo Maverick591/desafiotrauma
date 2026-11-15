@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 
 TITLE_PATTERN = re.compile(r"^Desafio Trauma\s*-\s*(\d{2}/\d{2}/\d{4})$")
@@ -156,13 +156,43 @@ class MentimeterClient:
     def _login(self, page) -> None:
         page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
         self._remove_consent_overlay(page)
-        page.get_by_label(re.compile("email", re.I)).fill(self.email)
-        page.get_by_test_id("password-input").fill(self.password)
+        identifier = page.get_by_test_id("identifier-input")
+        password = page.get_by_test_id("password-input")
+        form_timeout = 15_000
+        identifier.or_(password).first.wait_for(state="visible", timeout=form_timeout)
+        if not self._is_login_origin(page.url):
+            raise RuntimeError("Mentimeter login left the expected origin")
+        identifier_first = identifier.is_visible() and not password.is_visible()
+        if identifier_first:
+            # Mentimeter also serves an identifier-first form. Submit the email
+            # step before waiting for the password, independent of UI language.
+            identifier.fill(self.email)
+            identifier.press("Enter")
+            password = page.locator('input[type="password"]')
+            password.wait_for(state="visible", timeout=form_timeout)
+        else:
+            page.get_by_label(re.compile("email", re.I)).fill(self.email)
+        if not self._is_login_origin(page.url):
+            raise RuntimeError("Mentimeter login left the expected origin")
+        password.fill(self.password)
         # Cookiebot can mount after the initial DOM load and briefly cover the
         # submit button. Force is safe here because the target is already the
         # resolved, enabled login control.
-        page.get_by_test_id("login-btn").click(force=True)
-        page.wait_for_url(re.compile(r"/(app|dashboard)"), timeout=45_000)
+        submit = page.get_by_test_id("login-btn")
+        if identifier_first and not submit.is_visible():
+            password.press("Enter")
+        else:
+            submit.click(force=True)
+        page.wait_for_url(
+            lambda url: self._is_login_origin(url)
+            and urlsplit(url).path.split("/", 2)[1:2] in (["app"], ["dashboard"]),
+            timeout=45_000,
+        )
+
+    def _is_login_origin(self, url: str) -> bool:
+        actual = urlsplit(url)
+        expected = urlsplit(self.base_url)
+        return (actual.scheme, actual.netloc) == (expected.scheme, expected.netloc)
 
     def _discover_with_page(self, page) -> list[PresentationRef]:
         page.goto(f"{self.base_url}/app/dashboard", wait_until="domcontentloaded")
