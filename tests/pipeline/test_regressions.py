@@ -299,6 +299,39 @@ def test_parser_supports_column_oriented_matrix(tmp_path: Path) -> None:
     assert [response.is_correct for response in keyed] == [True, True, False, False]
 
 
+def test_insights_matrix_excludes_metadata_missing_answers_and_expands_ratings(tmp_path: Path) -> None:
+    path = tmp_path / "insights.xlsx"
+    wb = Workbook(); ws = wb.active
+    ws.append(["Participant ID", "Session", "Quiz name", "Quiz emoji", "Participante",
+               "Participante: Score", "Conduta?", "Conduta?: Score", "Avalie os seguintes critérios da reunião:"])
+    ws.append(["v1", "s1", "PRIVATE NAME", "PRIVATE EMOJI", "Residente", 0, "A", 900,
+               "Discussão Técnica: Qualidade: 5; Aplicabilidade: Próximo plantão: 4"])
+    ws.append(["v2", "s1", "PRIVATE NAME 2", "PRIVATE EMOJI", "No response", 0, "No response", 0, "No response"])
+    ws.append(["v1", "s2", "PRIVATE NAME", "PRIVATE EMOJI", "Aluno", 0, "B", 0,
+               "Aplicabilidade: Próximo plantão: 5; Discussão Técnica: Qualidade: 4"])
+    wb.save(path)
+    questions, responses = parse_workbook(path, "p")
+    assert [q.title for q in questions] == ["Participante", "Conduta?",
+        "Avalie os seguintes critérios da reunião — Discussão Técnica: Qualidade",
+        "Avalie os seguintes critérios da reunião — Aplicabilidade: Próximo plantão"]
+    assert [q.slide_index for q in questions] == [1, 2, 3, 3]
+    assert [q.kind for q in questions[-2:]] == [QuestionKind.EVALUATION]*2
+    assert len(responses) == 8
+    assert len({r.session_id for r in responses}) == 2
+    assert {r.value for r in responses} == {"Residente", "Aluno", "A", "B", 4, 5}
+    assert len({r.participant_id for r in responses}) == 2
+
+
+@pytest.mark.parametrize("rating", ["Critério: 6", "Critério: texto livre"])
+def test_insights_matrix_rejects_unrecognized_packed_ratings(tmp_path: Path, rating: str) -> None:
+    path = tmp_path / "invalid-insights.xlsx"
+    wb = Workbook(); ws = wb.active
+    ws.append(["Participant ID", "Session", "Quiz name", "Quiz emoji", "Avalie os seguintes critérios:"])
+    ws.append(["v1", "s1", "PRIVATE NAME", "PRIVATE EMOJI", rating]); wb.save(path)
+    with pytest.raises(UnknownSchemaError, match="packed rating"):
+        parse_workbook(path, "p")
+
+
 def test_parser_supports_official_voters_export_with_scales_and_sessions(tmp_path: Path) -> None:
     path = tmp_path / "voters.xlsx"
     workbook = Workbook()

@@ -119,6 +119,9 @@ def _parse_loaded_workbook(workbook, path: str | Path, presentation_id: str) -> 
     if selected is None and voters is not None:
         return _parse_voters_export(*voters, presentation_id, path)
     if selected is None and matrix is not None:
+        normalized = {_key(value) for value in matrix[3]}
+        if {"session", "quiz name", "quiz emoji"}.issubset(normalized):
+            return _parse_insights_matrix(*matrix, presentation_id)
         return _parse_matrix(*matrix, presentation_id)
     if selected is None:
         raise UnknownSchemaError(f"Unknown XLSX schema: {Path(path).name}")
@@ -279,6 +282,53 @@ def _parse_voters_export(
     if not responses:
         raise EmptyPresentationError(f"Recognized Voters sheet but no valid responses: {Path(path).name}")
     return questions, list(responses.values())
+
+
+def _parse_insights_matrix(sheet, header_row: int, participant_column: int,
+                           headers: tuple[Any, ...], presentation_id: str):
+    """Insights XLSX: omit identity/score fields and expand packed 1–5 scales."""
+    session_column = [_key(value) for value in headers].index("session")
+    columns = []
+    for column, raw_header in enumerate(headers):
+        title = str(raw_header or "").strip()
+        if column == participant_column or not title:
+            continue
+        if _key(title) in {"session", "quiz name", "quiz emoji", "date (utc)", "timestamp"}:
+            continue
+        if re.search(r":\s*(?:Score|Name|Emoji)\s*$", title, re.I):
+            continue
+        columns.append((column, title.rstrip(":"), len(columns) + 1))
+    questions: dict[str, Question] = {}
+    responses: dict[str, Response] = {}
+    for row in sheet.iter_rows(min_row=header_row + 1, values_only=True):
+        participant = str(row[participant_column] or "").strip() if participant_column < len(row) else ""
+        session = str(row[session_column] or "").strip() if session_column < len(row) else ""
+        if not participant or not session:
+            continue
+        session_id = stable_id("session", presentation_id, session)
+        participant_hash = content_hash({"presentation_id": presentation_id, "session": session, "participant": participant})
+        for column, title, slide_index in columns:
+            value = row[column] if column < len(row) else None
+            if value is None or _key(value) in {"", "no response"}:
+                continue
+            kind = _kind(title, "")
+            is_scale = kind == QuestionKind.EVALUATION or _key(title).startswith("avalie os seguintes criterios")
+            answers = [(title, value, kind)]
+            if is_scale:
+                answers = []
+                for part in str(value).split(";"):
+                    match = re.fullmatch(r"\s*(.+):\s*([1-5])\s*", part)
+                    if not match:
+                        raise UnknownSchemaError("Unrecognized Insights packed rating; refusing incomplete evaluation")
+                    answers.append((f"{title} — {match[1].strip()}", int(match[2]), QuestionKind.EVALUATION))
+            for question_title, answer, question_kind in answers:
+                question_id = stable_id("question", presentation_id, slide_index, question_title)
+                questions.setdefault(question_id, Question(question_id, presentation_id, slide_index, question_title, question_kind))
+                response_id = stable_id("response", presentation_id, session, participant, question_id)
+                responses[response_id] = Response(response_id, session_id, question_id, participant_hash, answer, None)
+    if not responses:
+        raise EmptyPresentationError("Recognized Insights matrix but no valid responses")
+    return list(questions.values()), list(responses.values())
 
 
 def _parse_matrix(sheet, header_row: int, participant_column: int, headers: tuple[Any, ...], presentation_id: str):
