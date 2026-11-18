@@ -489,7 +489,10 @@ class MentimeterClient:
 
             # Download and current Export menus require choosing the XLSX item.
             download_button.click()
-            xlsx_menuitem = page.locator("#excel-download-button")
+            # Insights retains the visible XLSX label but not the legacy ID.
+            xlsx_menuitem = page.locator("#excel-download-button").or_(
+                page.get_by_text(re.compile(r"^(?:Download\s+)?(?:Spreadsheet|Excel)\s*\(\.?XLSX\)$", re.I))
+            ).first
             xlsx_menuitem.wait_for(state="visible", timeout=15_000)
             with page.expect_event("download", timeout=45_000) as download_info:
                 xlsx_menuitem.click()

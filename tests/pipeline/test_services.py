@@ -343,15 +343,16 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards(accessib
     ]
 
 
-@pytest.mark.parametrize("label,popup,menu_download", [
-    ("Download", None, True), ("Export", "menu", True), ("Export", None, False),
-    ("Export results", "menu", True), ("Export results", None, False),
+@pytest.mark.parametrize("label,popup,menu_download,menu_id", [
+    ("Download", None, True, True), ("Export", "menu", True, True), ("Export", None, False, True),
+    ("Export results", "menu", True, True), ("Export results", None, False, True),
+    ("Export results", "menu", True, False),
 ])
-def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path, label, popup, menu_download) -> None:
+def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path, label, popup, menu_download, menu_id) -> None:
     from pipeline.mentimeter import MentimeterClient
 
     class FakeLocator:
-        def __init__(self, fail_first_wait: bool = False, text: str = "", has_popup=None) -> None:
+        def __init__(self, fail_first_wait: bool = False, text: str = "", has_popup=None, exists=True) -> None:
             self.waited = False
             self.wait_calls = 0
             self.fail_first_wait = fail_first_wait
@@ -359,8 +360,18 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path,
             self.click_options = None
             self.removed = False
             self.has_popup = has_popup
+            self.exists = exists
+
+        def or_(self, other):
+            return self if self.exists else other
+
+        @property
+        def first(self):
+            return self
 
         def wait_for(self, **_kwargs) -> None:
+            if not self.exists:
+                raise TimeoutError("XLSX menu no longer uses the legacy ID")
             self.waited = True
             self.wait_calls += 1
             if self.fail_first_wait and self.wait_calls == 1:
@@ -421,6 +432,10 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path,
             assert role == "button"
             return self.download_button
 
+        def get_by_text(self, pattern):
+            assert pattern.fullmatch("Spreadsheet (XLSX)")
+            return self.xlsx_menuitem
+
         def evaluate(self, script: str):
             if "open_participants_results_tab" in script:
                 self.opened_participants = True
@@ -448,7 +463,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path,
                 assert f"'{label}'" in selector, "current export label is not matched"
                 return self.download_button
             assert selector == "#excel-download-button"
-            return self.xlsx_menuitem
+            return self.xlsx_menuitem if menu_id else FakeLocator(exists=False)
 
         def expect_event(self, event: str, **_kwargs):
             assert event == "download"
