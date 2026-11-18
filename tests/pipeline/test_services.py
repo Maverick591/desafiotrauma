@@ -345,6 +345,7 @@ def test_mentimeter_discovery_uses_named_folder_and_waits_for_all_cards(accessib
 
 @pytest.mark.parametrize("label,popup,menu_download", [
     ("Download", None, True), ("Export", "menu", True), ("Export", None, False),
+    ("Export results", "menu", True), ("Export results", None, False),
 ])
 def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path, label, popup, menu_download) -> None:
     from pipeline.mentimeter import MentimeterClient
@@ -443,7 +444,8 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path,
             self.locators.append(selector)
             if selector == "#cookiebanner, #cookiebanner-container, #cookiebanner-backdrop":
                 return self.consent
-            if selector == "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']":
+            if selector.startswith("xpath=//button[normalize-space(.)="):
+                assert f"'{label}'" in selector, "current export label is not matched"
                 return self.download_button
             assert selector == "#excel-download-button"
             return self.xlsx_menuitem
@@ -464,7 +466,7 @@ def test_mentimeter_download_uses_results_page_and_xlsx_menuitem(tmp_path: Path,
         ("https://www.mentimeter.com/app/presentation/p1/results?source=dashboard",),
         {"wait_until": "domcontentloaded", "timeout": 45_000},
     )
-    assert "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']" in page.locators
+    assert any(f"'{label}'" in selector for selector in page.locators)
     assert page.expanded is True
     assert page.opened_participants is True
     assert page.reload_calls == [

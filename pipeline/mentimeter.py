@@ -353,10 +353,11 @@ class MentimeterClient:
         # Since September 2026 the Results page opens on Highlight. Export is
         # mounted only after switching to the Participants/Responses section.
         open_participants_results_tab()
-        # Mentimeter renamed this control from "Download" to "Export" in 2026.
-        # Keep both labels so older presentations and phased UI rollouts work.
+        # Mentimeter renamed this control from "Download" to "Export", then
+        # "Export results" on the Insights results application.
+        # Keep all labels so older presentations and phased UI rollouts work.
         download_button = page.locator(
-            "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download']"
+            "xpath=//button[normalize-space(.)='Export' or normalize-space(.)='Download' or normalize-space(.)='Export results']"
         )
 
         def expand_results_toolbar() -> bool:
@@ -477,7 +478,7 @@ class MentimeterClient:
             # routes. Remove it only after the results controls have mounted.
             self._remove_consent_overlay(page)
             direct_export = (
-                (download_button.inner_text() or "").strip().casefold() == "export"
+                (download_button.inner_text() or "").strip().casefold() in {"export", "export results"}
                 and download_button.get_attribute("aria-haspopup") != "menu"
             )
             if direct_export:
