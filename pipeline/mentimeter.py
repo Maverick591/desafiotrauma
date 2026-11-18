@@ -511,6 +511,25 @@ class MentimeterClient:
         download.save_as(xlsx_path)
         return xlsx_path
 
+    def _capture_slide_deck(self, page, ref: PresentationRef, candidates: list[Any]) -> dict[str, Any] | None:
+        deck = extract_latest_slide_deck(candidates)
+        if deck is not None:
+            return deck
+        # The new Insights app serves XLSX but no longer loads slide_deck.
+        # Read the same presentation's official editor without modifying it;
+        # retain the authoritative JSON/correct markers instead of guessing
+        # answers from the spreadsheet or publishing an incomplete accuracy.
+        page.goto(
+            f"{self.base_url}/app/presentation/{ref.presentation_id}/edit",
+            wait_until="domcontentloaded", timeout=45_000,
+        )
+        for _ in range(20):
+            page.wait_for_timeout(500)
+            deck = extract_latest_slide_deck(candidates)
+            if deck is not None:
+                return deck
+        return None
+
     def fetch(self, ref: PresentationRef, destination: Path) -> tuple[Path, dict[str, Any]]:
         """Download XLSX and capture the authoritative slide_deck JSON response."""
         from playwright.sync_api import sync_playwright
@@ -527,7 +546,7 @@ class MentimeterClient:
             page.on("response", on_response)
             xlsx_path = self._download_with_page(page, ref, destination)
             page.wait_for_timeout(750)
-            deck = extract_latest_slide_deck(response_candidates)
+            deck = self._capture_slide_deck(page, ref, response_candidates)
             browser.close()
         if deck is None:
             raise RuntimeError(f"No JSON response containing slide_deck for {ref.presentation_id}")

@@ -501,6 +501,40 @@ def test_capture_accepts_only_json_with_slide_deck() -> None:
     assert extract_slide_deck(deck) == deck["slide_deck"]
 
 
+@pytest.mark.parametrize("results_deck,editor_deck", [(True, False), (False, True), (False, False)])
+def test_deck_capture_uses_official_editor_only_when_results_omit_metadata(results_deck, editor_deck) -> None:
+    from pipeline.mentimeter import MentimeterClient
+
+    deck = {"name": "Desafio Trauma - 18/11/2026", "slides": []}
+
+    class FakeResponse:
+        def json(self):
+            return {"slide_deck": deck}
+
+    candidates = [FakeResponse()] if results_deck else []
+
+    class FakePage:
+        visits = []
+
+        def goto(self, url, **options):
+            self.visits.append((url, options))
+            if editor_deck:
+                candidates.append(FakeResponse())
+
+        def wait_for_timeout(self, _timeout):
+            pass
+
+    page = FakePage()
+    ref = PresentationRef("p1", deck["name"], "/app/presentation/p1/results")
+    client = MentimeterClient(email="admin@example.invalid", password="secret")
+    captured = client._capture_slide_deck(page, ref, candidates)
+    assert captured == (deck if results_deck or editor_deck else None)
+    assert page.visits == ([] if results_deck else [(
+        "https://www.mentimeter.com/app/presentation/p1/edit",
+        {"wait_until": "domcontentloaded", "timeout": 45_000},
+    )])
+
+
 def test_response_callback_defers_body_read_until_page_operation_finishes() -> None:
     class FakeResponse:
         headers = {"content-type": "application/json; charset=utf-8"}
